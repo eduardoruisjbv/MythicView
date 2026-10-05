@@ -3,7 +3,7 @@
 ## Notes: Cinematic action camera styles inspired by God of War, Darksiders, Horizon, Space Marine, The Witcher, Elden Ring and Red Dead Redemption 2.
 ## Notes-ptBR: Câmera cinematográfica e contextual com estilos inspirados em God of War, Darksiders, Horizon, Space Marine, The Witcher, Elden Ring e Red Dead Redemption 2.
 ## Author: Eduardo Rui
-## Version: 1.0.1
+## Version: 1.0.3
 ## IconTexture: 1109100
 ## OptionalDeps: AzeriteUI5_JuNNeZ_Edition
 ## SavedVariables: MythicViewDB

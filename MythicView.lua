@@ -259,8 +259,8 @@ local CLOSE_TARGET_RELEASE_DISTANCE = 10
 -- but sample stable gameplay state at a calmer cadence.
 local PROFILE_POLL_INTERVAL = 0.25
 local MOTION_UPDATE_INTERVAL = 1 / 30
--- The camera layers do not need every frame of a 144 Hz display, and at rest
--- (nothing animating but the barely visible breathing) they need far fewer.
+-- While animating the camera updates every frame (see K.CAMERA_BUSY_INTERVAL);
+-- at rest (nothing animating but the barely visible breathing) it needs far fewer.
 -- While animating, the camera updates at half the player's frame rate (they
 -- cannot see more than that in a CVar-driven move), clamped to a sane range.
 local CAMERA_IDLE_INTERVAL = 1 / 20
@@ -293,7 +293,7 @@ local LANDING_MIN_FALL = 0.25
 local LANDING_HEAVY_FALL = 1.75
 -- Grouped constants (keeps the main chunk under Lua's 200-local limit).
 local K = {}
-K.CAMERA_MIN_RATE, K.CAMERA_MAX_RATE = 30, 120
+K.CAMERA_BUSY_INTERVAL = 1 / 144 -- cap while the camera is animating
 K.TARGET_FOCUS_DUEL_YAW_STRENGTH = 0.78
 K.TARGET_FOCUS_DUEL_PITCH_STRENGTH = 0.46
 K.TARGET_FOCUS_CROWD_YAW_STRENGTH = 0.30
@@ -1363,13 +1363,50 @@ end
 -- CameraZoomIn/CameraZoomOut. We only ever send the change in the wanted
 -- distance (never compare against GetCameraZoom each frame), so an idle camera
 -- sends nothing and the engine's collision and smoothing cannot be fought.
+--
+-- The exception is a profile transition: there the zoom follows the curve with
+-- the engine's own continuous movement (MoveViewIn/Out at the curve's velocity,
+-- the way the early alpha did). Stepping a curve with many small
+-- CameraZoomIn/Out chunks makes the engine restart its interpolation on each
+-- chunk, which shows up as judder. The first frame after the curve ends hands
+-- over to one open-loop correction for whatever residual is left.
 local function DriveZoom(elapsed, curveActive, zoomOffset)
+  local previousOffset = cam.lastZoomOffset or zoomOffset
   cam.lastZoomOffset = zoomOffset
   cam.zoomOffset = zoomOffset
 
-  if cam.zoomPausedUntil then return end
+  if cam.zoomPausedUntil then
+    cam.zoomVelocityDriven = false
+    return
+  end
 
   local wanted = cam.zoom + zoomOffset
+
+  if curveActive then
+    local zoomSpeed = cam.zoomSpeed > 0 and cam.zoomSpeed or 20
+    local velocity = cam.zoomVelocity + (zoomOffset - previousOffset) / max(elapsed, 1 / 240)
+    local rate = abs(velocity) / zoomSpeed
+    if rate < 0.001 then
+      StopZoomMovement()
+    elseif velocity > 0 then
+      MoveViewInStop()
+      MoveViewOutStart(rate)
+    else
+      MoveViewOutStop()
+      MoveViewInStart(rate)
+    end
+    cam.zoomVelocityDriven = true
+    cam.zoomCommanded = wanted
+    cam.zoomSettled = false
+    return
+  end
+
+  if cam.zoomVelocityDriven then
+    cam.zoomVelocityDriven = false
+    StopZoomMovement()
+    cam.zoomCommanded = GetCameraZoom()
+  end
+
   if not cam.zoomCommanded then cam.zoomCommanded = GetCameraZoom() end
   local delta = wanted - cam.zoomCommanded
 
@@ -2086,10 +2123,6 @@ frame:SetScript("OnUpdate", function(_, elapsed)
   end
   if pollElapsed >= PROFILE_POLL_INTERVAL then
     pollElapsed = 0
-    local fps = GetFramerate()
-    if fps and fps > 0 then
-      cam.updateInterval = 1 / Clamp(fps / 2, K.CAMERA_MIN_RATE, K.CAMERA_MAX_RATE)
-    end
     if cam.ready and ShouldSuspend() then
       SuspendForTaxi()
       return
@@ -2166,10 +2199,15 @@ frame:SetScript("OnUpdate", function(_, elapsed)
     end
   end
 
+  -- While anything moves, update on every rendered frame (capped at 144 Hz).
+  -- Updating at half the frame rate, and resetting the accumulator, made the
+  -- camera step every 2-3 frames unevenly, which reads as judder. The
+  -- remainder is kept (modulo) so the cadence stays even above the cap.
   cameraUpdateElapsed = cameraUpdateElapsed + elapsed
-  if cameraUpdateElapsed >= (busy and (cam.updateInterval or 1 / 60) or CAMERA_IDLE_INTERVAL) then
+  local cameraInterval = busy and K.CAMERA_BUSY_INTERVAL or CAMERA_IDLE_INTERVAL
+  if cameraUpdateElapsed >= cameraInterval then
     local cameraElapsed = cameraUpdateElapsed
-    cameraUpdateElapsed = 0
+    cameraUpdateElapsed = busy and cameraUpdateElapsed % cameraInterval or 0
     UpdateCamera(cameraElapsed)
   end
 end)
