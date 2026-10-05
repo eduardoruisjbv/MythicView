@@ -1,0 +1,5 @@
+<Bindings>
+  <Binding name="MYTHICVIEW_LOCKON" header="MYTHICVIEW" category="ADDONS">
+    MythicView_ToggleLockOn()
+  </Binding>
+</Bindings>
