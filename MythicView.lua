@@ -336,7 +336,7 @@ local TWO_PI = 2 * pi
 local PRESETS = {
   ragnarok = {
     name = "God of War Ragnarök",
-    description = "Colada no ombro direito, golpes pesados com micro-freeze e tremor forte.",
+    description = "Tight over the right shoulder, with weighty impacts, hit-stop, and strong shake.",
     foot = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
     group = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
     mount = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
@@ -346,7 +346,7 @@ local PRESETS = {
   },
   darksiders = {
     name = "Darksiders",
-    description = "Mais alta e distante, personagem centralizado, impacto exagerado e trava de alvo forte.",
+    description = "Higher and farther back, with a centered character, exaggerated impacts, and strong target focus.",
     foot = { zoomScale = 0.75, zoomAdd = 4.5, fovAdd = -6 },
     group = { zoomScale = 1, zoomAdd = 1.0, fovAdd = -2 },
     mount = { zoomScale = 1, zoomAdd = 0, fovAdd = -2 },
@@ -356,7 +356,7 @@ local PRESETS = {
   },
   horizon = {
     name = "Horizon Zero Dawn",
-    description = "Ombro direito a média distância, movimento fluido, sprint que abre o quadro e mira ao conjurar.",
+    description = "Right-shoulder, mid-distance framing with fluid movement, sprint pull-back, and aim while casting.",
     foot = { zoomScale = 0.9, zoomAdd = 1.0, fovAdd = -2 },
     group = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
     mount = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
@@ -366,7 +366,7 @@ local PRESETS = {
   },
   spacemarine = {
     name = "Warhammer 40K: Space Marine",
-    description = "Ombro bem aberto e câmera baixa para um corpo enorme, peso nas transições, sprint que puxa para trás e mira ao conjurar.",
+    description = "Wide shoulder offset and a low camera for a massive character, weighty transitions, sprint pull-back, and aim while casting.",
     foot = { zoomScale = 0.9, zoomAdd = 2.0, fovAdd = 2 },
     group = { zoomScale = 1, zoomAdd = 0.5, fovAdd = 1 },
     mount = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
@@ -376,7 +376,7 @@ local PRESETS = {
   },
   witcher = {
     name = "The Witcher 3",
-    description = "Mais alta e distante, quase centralizada, movimento lento e flutuante, olhando o personagem de cima.",
+    description = "Higher and farther back, nearly centered, with slow, floaty movement and a downward view of the character.",
     foot = { zoomScale = 0.8, zoomAdd = 3.5, fovAdd = -3 },
     group = { zoomScale = 1, zoomAdd = 0.5, fovAdd = -1 },
     mount = { zoomScale = 1, zoomAdd = 1.0, fovAdd = -2 },
@@ -386,7 +386,7 @@ local PRESETS = {
   },
   eldenring = {
     name = "Elden Ring",
-    description = "Média distância e quase centralizada, transições secas e foco forte no inimigo, como a trava dos soulslike.",
+    description = "Mid-distance and nearly centered, with crisp transitions and strong enemy focus inspired by soulslike lock-on.",
     foot = { zoomScale = 0.8, zoomAdd = 2.5, fovAdd = -2 },
     group = { zoomScale = 1, zoomAdd = 0.5, fovAdd = -1 },
     mount = { zoomScale = 1, zoomAdd = 1.5, fovAdd = -1 },
@@ -396,7 +396,7 @@ local PRESETS = {
   },
   rdr2 = {
     name = "Red Dead Redemption 2",
-    description = "Lenta, pesada e cinematográfica, montaria bem afastada e mira ao conjurar, como o Dead Eye.",
+    description = "Slow, weighty, and cinematic, with a distant mounted view and aim while casting, like Dead Eye.",
     foot = { zoomScale = 0.85, zoomAdd = 3.0, fovAdd = -4 },
     group = { zoomScale = 1, zoomAdd = 0.5, fovAdd = -2 },
     mount = { zoomScale = 1, zoomAdd = 2.5, fovAdd = -3 },
@@ -2032,7 +2032,7 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     if ns.BuildOptions then
       local built, problem = pcall(ns.BuildOptions)
       if not built then
-        print("|cffd9bf8cMythic View|r: menu indisponível (" .. tostring(problem) .. ")")
+        print("|cffd9bf8cMythic View|r: menu unavailable (" .. tostring(problem) .. ")")
       end
     end
     lastMountedState = IsMounted()

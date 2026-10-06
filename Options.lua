@@ -18,7 +18,7 @@ function ns.OpenOptions()
   if ns.category and Settings and Settings.OpenToCategory then
     Settings.OpenToCategory(ns.category:GetID())
   else
-    print("|cffd9bf8cMythic View|r: menu indisponível nesta versão do jogo.")
+    print("|cffd9bf8cMythic View|r: menu unavailable in this game version.")
   end
 end
 
@@ -54,9 +54,9 @@ function ns.BuildOptions()
   -- Every toggle is tagged so players know which ones are safe to leave on
   -- and which can fight the game's own camera.
   local TAGS = {
-    good = { "|cff66dd88[Recomendado]|r ", "Recomendado ficar ligado: seguro e testado." },
-    optional = { "|cffe0c060[Opcional]|r ", "Opcional: depende do seu gosto, não causa problemas." },
-    risky = { "|cffe07050[Não recomendado]|r ", "Não recomendado: pode brigar com a câmera nativa do jogo e causar bugs." },
+    good = { "|cff66dd88[Recommended]|r ", "Recommended to keep enabled: safe and tested." },
+    optional = { "|cffe0c060[Optional]|r ", "Optional: personal preference; should not cause problems." },
+    risky = { "|cffe07050[Not recommended]|r ", "Not recommended: may conflict with the native game camera and cause bugs." },
   }
 
   local function Checkbox(key, label, tooltip, tag)
@@ -76,9 +76,9 @@ function ns.BuildOptions()
     Settings.CreateSlider(category, Register(key, Settings.VarType.Number, label), options, tooltip)
   end
 
-  Header("Legenda:  |cff66dd88[Recomendado]|r deixe ligado   |cffe0c060[Opcional]|r gosto pessoal   |cffe07050[Não recomendado]|r pode causar bugs")
-  Header("Estilo")
-  local presetSetting = Register("preset", Settings.VarType.String, "Estilo de câmera")
+  Header("Legend:  |cff66dd88[Recommended]|r keep enabled   |cffe0c060[Optional]|r personal preference   |cffe07050[Not recommended]|r may cause bugs")
+  Header("Style")
+  local presetSetting = Register("preset", Settings.VarType.String, "Camera style")
   Settings.CreateDropdown(category, presetSetting, function()
     local container = Settings.CreateControlTextContainer()
     for _, presetID in ipairs(ns.PRESET_ORDER) do
@@ -86,43 +86,43 @@ function ns.BuildOptions()
       container:Add(presetID, preset.name, preset.description)
     end
     return container:GetData()
-  end, "Muda distância, enquadramento, ritmo e intensidade de toda a câmera.")
-  Percent("zoomScale", "Distância da câmera", 70, 150,
-    "Multiplica a distância de todos os perfis do estilo escolhido.")
+  end, "Changes the camera distance, framing, pacing, and overall intensity.")
+  Percent("zoomScale", "Camera distance", 70, 150,
+    "Scales the distance of every profile in the selected style.")
 
   if ns.SHAKES_ENABLED then
-  Header("Tremores e impacto")
-  Percent("shakeIntensity", "Intensidade dos tremores", 0, 200,
-    "Força de todos os tremores e impactos (golpes, dano, aterrissagem, entrada em combate).")
-  Checkbox("hitImpacts", "Tremor ao acertar e ao ser atingido",
-    "Empurrão de zoom/FOV e tremor quando um golpe seu acerta ou quando você toma dano.")
-  Checkbox("hitstop", "Micro-freeze nos golpes",
-    "A câmera congela por alguns quadros no pico do golpe antes de tremer.")
-  Percent("stepSway", "Balanço dos passos", 0, 200,
-    "Balanço lateral da câmera a cada passo, no ritmo da velocidade real.")
-  Checkbox("breathing", "Respiração parado",
-    "Deriva lenta e quase invisível da câmera quando você está parado.")
-  Checkbox("verticalShake", "Tremor vertical (experimental)",
-    "Inclina a câmera para cima/baixo em impactos e passos. O WoW não informa a inclinação real da câmera, então pode brigar com o movimento nativo — deixe desligado se a câmera 'subir e descer' ao correr.", "risky")
+  Header("Shake and impact")
+  Percent("shakeIntensity", "Shake intensity", 0, 200,
+    "Strength of all shakes and impacts (hits, damage, landing, and entering combat).")
+  Checkbox("hitImpacts", "Shake on hits and damage taken",
+    "Zoom/FOV kick and shake when your attacks land or when you take damage.")
+  Checkbox("hitstop", "Hit-stop on hits",
+    "The camera freezes for a few frames at the peak of a hit before shaking.")
+  Percent("stepSway", "Footstep sway", 0, 200,
+    "Side-to-side camera sway with each step, paced by actual movement speed.")
+  Checkbox("breathing", "Idle breathing",
+    "Slow, nearly imperceptible camera drift while standing still.")
+  Checkbox("verticalShake", "Vertical shake (experimental)",
+    "Tilts the camera up/down on impacts and footsteps. WoW does not expose the camera’s actual pitch, so this may conflict with native movement. Leave it off if the camera bobs while running.", "risky")
   end
 
-  Header("Enquadramento")
-  Checkbox("speedDrag", "Afastar com a velocidade (speed drag)",
-    "A câmera fica para trás ao acelerar e alcança ao frear.", "good")
-  Checkbox("lookAhead", "Antecipar curvas (look-ahead)",
-    "Ao virar ou andar de lado, o quadro abre espaço para onde você vai.", "good")
-  Checkbox("composition", "Manter regra dos terços",
-    "Quando o zoom ou o FOV mudam dinamicamente, o ombro acompanha para o personagem não sair do lugar na tela.", "good")
-  Checkbox("rubberBand", "Abrir com muitos inimigos (rubber band)",
-    "Cada atacante além de quatro estica o quadro um pouco mais.", "optional")
-  Checkbox("aimOnCast", "Zoom de mira ao conjurar",
-    "Magias com tempo de conjuração e canalizações aproximam a câmera sobre o ombro, como mirar com o arco.", "optional")
+  Header("Framing")
+  Checkbox("speedDrag", "Pull back with speed (speed drag)",
+    "The camera lags behind as you accelerate and catches up as you slow down.", "good")
+  Checkbox("lookAhead", "Look ahead through turns",
+    "Turning or strafing opens space in the direction you are moving.", "good")
+  Checkbox("composition", "Maintain rule of thirds",
+    "When zoom or FOV changes dynamically, the shoulder offset follows so your character stays in place on screen.", "good")
+  Checkbox("rubberBand", "Widen for many enemies (rubber band)",
+    "Each attacker beyond four widens the frame a little more.", "optional")
+  Checkbox("aimOnCast", "Aim zoom while casting",
+    "Cast-time spells and channels move the camera over your shoulder, like aiming a bow.", "optional")
 
-  Header("Motor do jogo")
-  Checkbox("smoothCollision", "Colisão suave + silhueta atrás de paredes",
-    "A câmera tolera mais obstáculos antes de se aproximar e o personagem aparece em silhueta quando encoberto.", "good")
-  Checkbox("freeFollow", "Câmera segue atrás ao andar (free follow)",
-    "O jogo gira a câmera para trás do personagem enquanto você anda, com atraso suave.", "risky")
+  Header("Game engine")
+  Checkbox("smoothCollision", "Smooth collision + silhouette behind walls",
+    "The camera tolerates more obstacles before moving closer, and your character appears as a silhouette when occluded.", "good")
+  Checkbox("freeFollow", "Camera follows behind while moving (free follow)",
+    "The game turns the camera behind your character as you move, with smooth lag.", "risky")
 
   Settings.RegisterAddOnCategory(category)
   ns.category = category
