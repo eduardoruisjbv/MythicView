@@ -1,0 +1,7 @@
+package-as: MythicView
+license-output: LICENSE
+ignore:
+    - .gitignore
+    - CHANGELOG.md
+    - CHANGELOG-1.0.1.md
+    - CHANGELOG-ptBR.md
