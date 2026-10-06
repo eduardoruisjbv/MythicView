@@ -1,9 +1,9 @@
-# Mythic View — Changelog (português)
+# Mythic View — Changelog
 
-## 1.0.3 — Câmera suave (2026-10-05)
+## 1.0.3 — Smooth camera (2026-10-05)
 
-- Corrigida a pequena tremida da câmera: enquanto anima, ela agora atualiza a cada frame renderizado (limite de 144 Hz). Antes atualizava a metade da taxa de quadros e zerava o cronômetro, então andava em degraus irregulares de 2–3 frames.
-- As transições de perfil conduzem o zoom com o movimento contínuo do próprio motor (MoveViewIn/Out na velocidade da curva de easing), em vez de vários pedaços pequenos de CameraZoomIn/Out, e entregam uma única correção quando a curva termina.
-- O custo em repouso não mudou: sem nada animando, a câmera continua atualizando raramente.
+- Fixed the slight camera judder: while animating, the camera now updates on every rendered frame (up to 144 Hz). Previously, it updated at half the frame rate and reset the timer, producing uneven 2–3-frame steps.
+- Profile transitions now drive zoom through the engine’s continuous movement (`MoveViewIn/Out`) at the easing curve’s velocity, instead of many short `CameraZoomIn/Out` steps, and apply a single correction when the curve ends.
+- Idle cost is unchanged: when nothing is animating, the camera still updates infrequently.
 
-O histórico completo (em inglês) está em CHANGELOG.md.
+The full history is in [CHANGELOG.md](CHANGELOG.md).
