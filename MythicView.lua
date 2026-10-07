@@ -62,6 +62,8 @@ local BASE_PROFILES = {
   dungeon = { zoom = 12.0, shoulder = 1.35, fov = 78 },
   raid = { zoom = 16.0, shoulder = 1.45, fov = 86 },
   arena = { zoom = 15.0, shoulder = 1.45, fov = 86 },
+  -- Battlegrounds keep a wide, steady frame and never track the selected target.
+  battleground = { zoom = 18.0, shoulder = 0.90, fov = 90 },
   -- Ground travel stays close and deliberately off-centre for a cinematic ride.
   mountedGround = { zoom = 9.0, shoulder = 4.50, fov = 65 },
   mountedGroundMoving = { zoom = 10.5, shoulder = 4.50, fov = 71 },
@@ -78,16 +80,19 @@ local BASE_PROFILES = {
   combatDungeon = { zoom = 11.5, shoulder = 1.55, fov = 80 },
   combatRaid = { zoom = 14.5, shoulder = 1.60, fov = 86 },
   combatArena = { zoom = 14.0, shoulder = 1.60, fov = 86 },
+  combatBattleground = { zoom = 17.0, shoulder = 1.05, fov = 90 },
   -- Ragnarök pulls the camera out and nearer the centre as more enemies close
   -- in. Two or three attackers open the frame; four or more open it further.
   combatCrowdWorld = { zoom = 9.5, shoulder = 1.25, fov = 88 },
   combatCrowdDungeon = { zoom = 14.0, shoulder = 1.35, fov = 86 },
   combatCrowdRaid = { zoom = 17.0, shoulder = 1.40, fov = 88 },
   combatCrowdArena = { zoom = 16.0, shoulder = 1.45, fov = 88 },
+  combatCrowdBattleground = { zoom = 19.0, shoulder = 1.00, fov = 90 },
   combatHordeWorld = { zoom = 12.5, shoulder = 1.00, fov = 90, transitionDuration = 1.10 },
   combatHordeDungeon = { zoom = 16.5, shoulder = 1.15, fov = 90, transitionDuration = 1.10 },
   combatHordeRaid = { zoom = 19.0, shoulder = 1.20, fov = 90, transitionDuration = 1.10 },
   combatHordeArena = { zoom = 18.0, shoulder = 1.25, fov = 90, transitionDuration = 1.10 },
+  combatHordeBattleground = { zoom = 21.0, shoulder = 0.90, fov = 92, transitionDuration = 1.10 },
   -- Tight, intimate framing for enemies within CLOSE_TARGET_DISTANCE yards.
   combatClose = { zoom = 4.5, shoulder = 1.75, fov = 88 },
 }
@@ -436,7 +441,8 @@ local PROFILES = {}
 local function GetProfileGroup(profileID)
   if profileID:find("^mounted") then return "mount" end
   if profileID == "dungeon" or profileID == "raid" or profileID == "arena"
-      or profileID:find("Dungeon$") or profileID:find("Raid$") or profileID:find("Arena$") then
+      or profileID == "battleground" or profileID:find("Dungeon$")
+      or profileID:find("Raid$") or profileID:find("Arena$") or profileID:find("Battleground$") then
     return "group"
   end
   return "foot"
@@ -492,6 +498,7 @@ local activeMountScanned = false
 local lastMountedState
 local mountRefreshSerial = 0
 local targetFocusEnabled
+local targetFocusPvPSuppressed
 local taxiSuspended = false
 local activeViewDistance
 local closeTargetActive = false
@@ -933,6 +940,19 @@ end
 local function SelectProfile()
   local _, instanceType = IsInInstance()
 
+  -- PvP instances take priority over movement and target state. BG camera
+  -- profiles stay steady even while mounted or fighting in large groups.
+  if instanceType == "pvp" then
+    if UnitAffectingCombat("player") then
+      UpdateAttackerCount()
+      if crowdLevel == 2 then return "combatHordeBattleground", PROFILES.combatHordeBattleground end
+      if crowdLevel == 1 then return "combatCrowdBattleground", PROFILES.combatCrowdBattleground end
+      return "combatBattleground", PROFILES.combatBattleground
+    end
+    ResetCrowd()
+    return "battleground", PROFILES.battleground
+  end
+
   if not UnitAffectingCombat("player") then
     closeTargetActive = false
     ResetCrowd()
@@ -998,6 +1018,7 @@ local function SelectProfile()
   local area = instanceType == "party" and "Dungeon"
     or instanceType == "raid" and "Raid"
     or instanceType == "arena" and "Arena"
+    or instanceType == "pvp" and "Battleground"
     or "World"
   if crowdLevel == 2 then
     local profileID = "combatHorde" .. area
@@ -1598,6 +1619,22 @@ local function GetFocusStrength()
 end
 
 local function UpdateTargetFocus(elapsed)
+  local _, instanceType = IsInInstance()
+  if instanceType == "pvp" or instanceType == "arena" then
+    -- Do not leave even a fading target-follow active after entering PvP.
+    if not targetFocusPvPSuppressed then
+      SetCVar("test_cameraTargetFocusEnemyEnable", "0", "MythicView")
+      targetFocusPvPSuppressed = true
+    end
+    targetFocusEnabled = nil
+    cam.focusYaw, cam.focusYawVelocity = 0, 0
+    cam.focusPitch, cam.focusPitchVelocity = 0, 0
+    lastFrameCVarValues.test_cameraTargetFocusEnemyStrengthYaw = nil
+    lastFrameCVarValues.test_cameraTargetFocusEnemyStrengthPitch = nil
+    return
+  end
+  targetFocusPvPSuppressed = nil
+
   local yawTarget, pitchTarget = GetFocusStrength()
   local hasTarget = yawTarget ~= nil
   if not hasTarget then yawTarget, pitchTarget = 0, 0 end
