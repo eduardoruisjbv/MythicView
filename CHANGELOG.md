@@ -1,5 +1,10 @@
 # Mythic View — Changelog
 
+## 1.0.4 — PvP-aware battleground camera (2026-10-07)
+
+- Added dedicated battleground framing, with separate profiles for normal combat, crowds and large groups. Battleground framing takes priority over movement and mounted states so the view stays wide and steady.
+- Disabled target-follow camera focus in battlegrounds and arenas to prevent the game camera from pulling the view toward selected enemies.
+
 ## 1.0.3 — Smooth camera (2026-10-05)
 
 - Fixed the small camera judder: while it animates, the camera now updates on every rendered frame (capped at 144 Hz). It used to update at half the frame rate and reset its timer, so it advanced in uneven steps of 2–3 frames.
