@@ -1,9 +1,9 @@
 ## Interface: 120100
 ## Title: Mythic View
-## Notes: Cinematic action camera styles inspired by God of War, Darksiders, Horizon, Space Marine, The Witcher, Elden Ring and Red Dead Redemption 2.
-## Notes-ptBR: Câmera cinematográfica e contextual com estilos inspirados em God of War, Darksiders, Horizon, Space Marine, The Witcher, Elden Ring e Red Dead Redemption 2.
+## Notes: Contextual action camera with automatic competitive PvP camera for arenas and battlegrounds.
+## Notes-ptBR: Câmera contextual com modo competitivo automático para Arenas e Campos de Batalha.
 ## Author: Eduardo Rui
-## Version: 1.0.4
+## Version: 1.0.7
 ## IconTexture: 1109100
 ## OptionalDeps: AzeriteUI5_JuNNeZ_Edition
 ## SavedVariables: MythicViewDB

@@ -1,5 +1,19 @@
 # Mythic View — Changelog
 
+## 1.0.7 — Lua loading hotfix (2026-10-07)
+
+- Fixed the Lua 5.1 chunk local-variable limit that prevented the addon from loading. PvP helpers now use the addon namespace and existing tuning table, preserving the fixed PvP camera and automatic switch.
+
+## 1.0.6 — Fixed PvP camera (2026-10-07)
+
+- The automatic arena/battleground mode now holds one profile through combat, crowds, movement and mounting: maximum addon zoom, 90-degree FOV, centered shoulder, and no dynamic camera layers.
+- The automatic-mode checkbox remains enabled by default; the player's selected style is restored after leaving PvP.
+
+## 1.0.5 — Automatic PvP camera (2026-10-07)
+
+- Added a Competitive PvP camera style with a wider, more centered and steadier view, reduced camera motion, and no cast aiming or target focus.
+- Arenas and battlegrounds now switch to this style automatically by default; the selected camera style is restored after leaving PvP. The automatic switch can be disabled in Options.
+
 ## 1.0.4 — PvP-aware battleground camera (2026-10-07)
 
 - Added dedicated battleground framing, with separate profiles for normal combat, crowds and large groups. Battleground framing takes priority over movement and mounted states so the view stays wide and steady.

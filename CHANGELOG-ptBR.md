@@ -1,5 +1,19 @@
 # Mythic View — Changelog
 
+## 1.0.7 — Correção de carregamento Lua (2026-10-07)
+
+- Corrigido o excesso de variáveis locais do Lua 5.1 que impedia o carregamento do addon. As funções PvP agora usam o namespace do addon e a tabela de ajustes existente, preservando a câmera PvP fixa e a troca automática.
+
+## 1.0.6 — Câmera PvP fixa (2026-10-07)
+
+- O modo automático de Arena/Campo de Batalha agora mantém um perfil durante combate, grupos, movimento e montaria: zoom máximo do addon, FOV de 90 graus, câmera centralizada e sem camadas dinâmicas.
+- A checkbox de troca automática continua ativada por padrão; o estilo escolhido pelo jogador volta ao sair do PvP.
+
+## 1.0.5 — Câmera PvP automática (2026-10-07)
+
+- Adicionado o estilo PvP Competitivo, com visão mais aberta, centralizada e estável, menos movimento de câmera e sem apontar para o alvo durante a conjuração.
+- Arenas e Campos de Batalha passam a usar esse estilo automaticamente. O estilo escolhido pelo jogador é restaurado ao sair do PvP; a troca automática pode ser desativada nas opções.
+
 ## 1.0.4 — Câmera de Campo de Batalha (2026-10-07)
 
 - Adicionados enquadramentos próprios para Campos de Batalha, com perfis diferentes para combate normal, grupos e grandes aglomerações. O perfil PvP tem prioridade sobre movimento e montaria para manter a visão aberta e estável.

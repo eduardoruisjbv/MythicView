@@ -64,6 +64,8 @@ local BASE_PROFILES = {
   arena = { zoom = 15.0, shoulder = 1.45, fov = 86 },
   -- Battlegrounds keep a wide, steady frame and never track the selected target.
   battleground = { zoom = 18.0, shoulder = 0.90, fov = 90 },
+  -- The fixed competitive mode uses the addon's maximum zoom and a centered view.
+  pvp = { zoom = 39.0, shoulder = 0, fov = 90 },
   -- Ground travel stays close and deliberately off-centre for a cinematic ride.
   mountedGround = { zoom = 9.0, shoulder = 4.50, fov = 65 },
   mountedGroundMoving = { zoom = 10.5, shoulder = 4.50, fov = 71 },
@@ -409,11 +411,22 @@ local PRESETS = {
     shake = 0.6, hitstop = 0.5, sway = 0.8, drag = 0.9, lead = 0.8, focus = 0.85,
     aimOnCast = true, dynamicPitch = false,
   },
+  pvp = {
+    name = "PvP — Competitive",
+    description = "Fixed 90-degree FOV, maximum addon zoom and centered framing, with no dynamic camera effects.",
+    foot = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
+    group = { zoomScale = 1.05, zoomAdd = 1.5, fovAdd = 3 },
+    mount = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
+    shoulderScale = 0.25, timeScale = 0.85,
+    shake = 0, hitstop = 0, sway = 0, drag = 0, lead = 0, focus = 0,
+    aimOnCast = false, dynamicPitch = false,
+  },
 }
-local PRESET_ORDER = { "ragnarok", "darksiders", "horizon", "spacemarine", "witcher", "eldenring", "rdr2" }
+local PRESET_ORDER = { "ragnarok", "darksiders", "horizon", "spacemarine", "witcher", "eldenring", "rdr2", "pvp" }
 
 local SETTINGS_DEFAULTS = {
   preset = "ragnarok",
+  autoPvpCamera = true,
   zoomScale = 100,
   shakeIntensity = 100,
   stepSway = 100,
@@ -437,6 +450,14 @@ for key, value in pairs(SETTINGS_DEFAULTS) do settings[key] = value end
 -- Effective tuning, derived from the style and the settings.
 local tune = {}
 local PROFILES = {}
+-- Keep PvP helpers on the addon namespace: Lua 5.1 caps chunk locals at 200.
+function ns.GetEffectivePresetID()
+  local _, instanceType = IsInInstance()
+  if settings.autoPvpCamera and (instanceType == "arena" or instanceType == "pvp") then
+    return "pvp"
+  end
+  return settings.preset
+end
 
 local function GetProfileGroup(profileID)
   if profileID:find("^mounted") then return "mount" end
@@ -449,37 +470,53 @@ local function GetProfileGroup(profileID)
 end
 
 local function RebuildTuning()
-  local preset = PRESETS[settings.preset] or PRESETS.ragnarok
-  tune.shake = preset.shake * settings.shakeIntensity / 100
-  tune.hits = settings.hitImpacts
-  tune.hitstop = settings.hitstop and preset.hitstop or 0
-  tune.sway = preset.sway * settings.stepSway / 100
-  tune.drag = settings.speedDrag and preset.drag or 0
-  tune.lead = settings.lookAhead and preset.lead or 0
-  tune.focus = preset.focus
+  local effectivePresetID = ns.GetEffectivePresetID()
+  local preset = PRESETS[effectivePresetID] or PRESETS.ragnarok
+  local pvpFixed = effectivePresetID == "pvp"
+  tune.presetID = effectivePresetID
+  tune.pvpFixed = pvpFixed
+  tune.shake = pvpFixed and 0 or preset.shake * settings.shakeIntensity / 100
+  tune.hits = not pvpFixed and settings.hitImpacts
+  tune.hitstop = not pvpFixed and settings.hitstop and preset.hitstop or 0
+  tune.sway = not pvpFixed and preset.sway * settings.stepSway / 100 or 0
+  tune.drag = not pvpFixed and settings.speedDrag and preset.drag or 0
+  tune.lead = not pvpFixed and settings.lookAhead and preset.lead or 0
+  tune.focus = pvpFixed and 0 or preset.focus
   tune.time = preset.timeScale
-  tune.vertical = settings.verticalShake
-  tune.breathing = settings.breathing
+  tune.vertical = not pvpFixed and settings.verticalShake or false
+  tune.breathing = not pvpFixed and settings.breathing or false
   if not FEEL.shakesEnabled then
     tune.shake, tune.hits, tune.hitstop, tune.sway = 0, false, 0, 0
     tune.vertical, tune.breathing = false, false
   end
-  tune.composition = settings.composition
-  tune.rubber = settings.rubberBand
-  tune.aim = settings.aimOnCast
+  tune.composition = not pvpFixed and settings.composition or false
+  tune.rubber = not pvpFixed and settings.rubberBand or false
+  if effectivePresetID == "pvp" then
+    tune.aim = false
+  else
+    tune.aim = settings.aimOnCast
+  end
   tune.dynamicPitch = preset.dynamicPitch
 
   local zoomScale = settings.zoomScale / 100
   for profileID, base in pairs(BASE_PROFILES) do
     local shape = preset[GetProfileGroup(profileID)]
     local profile = PROFILES[profileID] or {}
-    profile.zoom = max(1, (base.zoom * shape.zoomScale + shape.zoomAdd) * zoomScale)
-    profile.shoulder = base.shoulder * preset.shoulderScale
-    profile.fov = min(90, max(50, base.fov + shape.fovAdd))
-    profile.transitionDuration = base.transitionDuration
-      and base.transitionDuration * preset.timeScale
-    profile.fovTransitionDuration = base.fovTransitionDuration
-      and base.fovTransitionDuration * preset.timeScale
+    if pvpFixed and profileID == "pvp" then
+      profile.zoom = FEEL.maxZoom
+      profile.shoulder = 0
+      profile.fov = FOV_MAX
+      profile.transitionDuration = nil
+      profile.fovTransitionDuration = nil
+    else
+      profile.zoom = max(1, (base.zoom * shape.zoomScale + shape.zoomAdd) * zoomScale)
+      profile.shoulder = base.shoulder * preset.shoulderScale
+      profile.fov = min(90, max(50, base.fov + shape.fovAdd))
+      profile.transitionDuration = base.transitionDuration
+        and base.transitionDuration * preset.timeScale
+      profile.fovTransitionDuration = base.fovTransitionDuration
+        and base.fovTransitionDuration * preset.timeScale
+    end
     PROFILES[profileID] = profile
   end
 end
@@ -940,6 +977,13 @@ end
 local function SelectProfile()
   local _, instanceType = IsInInstance()
 
+  -- One immutable camera profile for the whole competitive instance. The
+  -- player's saved style remains untouched and is restored outside PvP.
+  if settings.preset == "pvp" or (settings.autoPvpCamera
+      and (instanceType == "arena" or instanceType == "pvp")) then
+    return "pvp", PROFILES.pvp
+  end
+
   -- PvP instances take priority over movement and target state. BG camera
   -- profiles stay steady even while mounted or fighting in large groups.
   if instanceType == "pvp" then
@@ -1215,6 +1259,10 @@ local function ShakeNoise(time, seed)
 end
 
 local function UpdateEffectLayers(elapsed)
+  if tune.pvpFixed then
+    return 0, 0, 0, 0, 0, 0, 0, 0, 0
+  end
+
   -- fovOffset holds sustained changes (drag, sprint, rubber band); fovKick
   -- holds transient juice (impulses, shake), applied after the sustained part
   -- is clamped so a kick still reads when the view is already at its widest.
@@ -1620,7 +1668,7 @@ end
 
 local function UpdateTargetFocus(elapsed)
   local _, instanceType = IsInInstance()
-  if instanceType == "pvp" or instanceType == "arena" then
+  if tune.pvpFixed or instanceType == "pvp" or instanceType == "arena" then
     -- Do not leave even a fading target-follow active after entering PvP.
     if not targetFocusPvPSuppressed then
       SetCVar("test_cameraTargetFocusEnemyEnable", "0", "MythicView")
@@ -1668,6 +1716,7 @@ local function UpdateTargetFocus(elapsed)
 end
 
 local function SetLockOn(enabled)
+  if enabled and tune.pvpFixed then enabled = false end
   enabled = enabled and HasHostileTarget() or false
   if enabled == lockOn then return end
   lockOn = enabled
@@ -1772,9 +1821,29 @@ local function UpdateEffectScale()
     or (instanceType == "party" and FEEL.partyScale or 1)
 end
 
+function ns.ResetPvpCameraLayers()
+  lockOn = false
+  cam.impulses = {}
+  cam.trauma, cam.sprint, cam.stepEnvelope, cam.freeze = 0, 0, 0, 0
+  cam.zoomOffset, cam.lastZoomOffset = 0, 0
+  cam.zoomPausedUntil = nil
+  cam.smoothSpeed, cam.speedVelocity = 0, 0
+  cam.lead, cam.leadVelocity = 0, 0
+  cam.rubber, cam.rubberVelocity = 0, 0
+  cam.lockZoom, cam.lockZoomVelocity = 0, 0
+  cam.aim, cam.aimVelocity = 0, 0
+  cam.pitchRate, cam.lastPitchTarget = 0, 0
+  pendingHit = nil
+  combatEntryPending = false
+  combatEntryElapsed = 0
+end
+
 ApplyCurrentProfile = function()
   if taxiSuspended then return end
   local profileID, profile = SelectProfile()
+  if profileID == "pvp" and activeProfile ~= "pvp" then
+    ns.ResetPvpCameraLayers()
+  end
   UpdateViewDistance(profileID)
   UpdateHeadMovement(profileID)
   BeginTransition(profileID, profile)
@@ -2113,6 +2182,11 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     UpdateEffectScale()
     cam.pitchMoveSpeed = tonumber(GetCVar("cameraPitchMoveSpeed")) or 90
     if cam.pitchMoveSpeed <= 0 then cam.pitchMoveSpeed = 90 end
+    if ns.GetEffectivePresetID() ~= tune.presetID then
+      RebuildTuning()
+      ApplyEngineSettings()
+      activeProfile = nil
+    end
   elseif event == "PLAYER_REGEN_DISABLED" then
     RefreshVisibleNameplates()
     combatEntryPending = true

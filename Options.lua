@@ -87,6 +87,8 @@ function ns.BuildOptions()
     end
     return container:GetData()
   end, "Changes the camera distance, framing, pacing, and overall intensity.")
+  Checkbox("autoPvpCamera", "Automatically use PvP camera in arenas and battlegrounds",
+    "Temporarily switches to PvP Competitive in arenas and battlegrounds: fixed 90-degree FOV, maximum addon zoom, centered framing, and no dynamic camera effects. Restores your selected style when you leave.", "good")
   Percent("zoomScale", "Camera distance", 70, 150,
     "Scales the distance of every profile in the selected style.")
 
