@@ -1,5 +1,10 @@
 # Mythic View — Changelog
 
+## 1.1.0 — Three new camera styles (2026-10-08)
+
+- Added **The Last of Us Part II** (low and tight over the shoulder, narrow view, slow tense movement, aim while casting), **Ghost of Tsushima** (mid-distance, nearly centered, long silky transitions) and **Sekiro: Shadows Die Twice** (closer and faster than Elden Ring, strong enemy focus, sharp impacts).
+- Ten selectable styles in total, plus the automatic Competitive PvP camera.
+
 ## 1.0.7 — Lua loading hotfix (2026-10-07)
 
 - Fixed the Lua 5.1 chunk local-variable limit that prevented the addon from loading. PvP helpers now use the addon namespace and existing tuning table, preserving the fixed PvP camera and automatic switch.

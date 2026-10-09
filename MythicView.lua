@@ -411,6 +411,36 @@ local PRESETS = {
     shake = 0.6, hitstop = 0.5, sway = 0.8, drag = 0.9, lead = 0.8, focus = 0.85,
     aimOnCast = true, dynamicPitch = false,
   },
+  tlou2 = {
+    name = "The Last of Us Part II",
+    description = "Low and tight over the shoulder with a narrow view, slow tense movement, and aim while casting.",
+    foot = { zoomScale = 0.6, zoomAdd = -1.5, fovAdd = -8 },
+    group = { zoomScale = 0.9, zoomAdd = 0, fovAdd = -3 },
+    mount = { zoomScale = 1, zoomAdd = 0, fovAdd = -3 },
+    shoulderScale = 0.95, timeScale = 1.35,
+    shake = 0.7, hitstop = 0.6, sway = 1.1, drag = 0.6, lead = 0.9, focus = 0.8,
+    aimOnCast = true, dynamicPitch = false,
+  },
+  tsushima = {
+    name = "Ghost of Tsushima",
+    description = "Mid-distance and nearly centered, with long, silky transitions and a view that opens wide against groups.",
+    foot = { zoomScale = 0.9, zoomAdd = 1.5, fovAdd = -1 },
+    group = { zoomScale = 1, zoomAdd = 0.5, fovAdd = 0 },
+    mount = { zoomScale = 1, zoomAdd = 1.0, fovAdd = -1 },
+    shoulderScale = 0.30, timeScale = 1.50,
+    shake = 0.5, hitstop = 0.5, sway = 0.6, drag = 1.0, lead = 1.1, focus = 0.9,
+    aimOnCast = false, dynamicPitch = false,
+  },
+  sekiro = {
+    name = "Sekiro: Shadows Die Twice",
+    description = "Closer than Elden Ring and faster, locked onto the enemy with sharp impacts and little drift.",
+    foot = { zoomScale = 0.7, zoomAdd = 1.0, fovAdd = -4 },
+    group = { zoomScale = 0.95, zoomAdd = 0.3, fovAdd = -2 },
+    mount = { zoomScale = 1, zoomAdd = 1.0, fovAdd = -1 },
+    shoulderScale = 0.15, timeScale = 0.70,
+    shake = 1.0, hitstop = 1.2, sway = 0.5, drag = 0.7, lead = 0.5, focus = 1.40,
+    aimOnCast = false, dynamicPitch = false,
+  },
   pvp = {
     name = "PvP — Competitive",
     description = "Fixed 90-degree FOV, maximum addon zoom and centered framing, with no dynamic camera effects.",
@@ -422,7 +452,7 @@ local PRESETS = {
     aimOnCast = false, dynamicPitch = false,
   },
 }
-local PRESET_ORDER = { "ragnarok", "darksiders", "horizon", "spacemarine", "witcher", "eldenring", "rdr2", "pvp" }
+local PRESET_ORDER = { "ragnarok", "darksiders", "horizon", "spacemarine", "witcher", "eldenring", "rdr2", "tlou2", "tsushima", "sekiro", "pvp" }
 
 local SETTINGS_DEFAULTS = {
   preset = "ragnarok",

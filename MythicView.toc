@@ -3,7 +3,7 @@
 ## Notes: Contextual action camera with automatic competitive PvP camera for arenas and battlegrounds.
 ## Notes-ptBR: Câmera contextual com modo competitivo automático para Arenas e Campos de Batalha.
 ## Author: Eduardo Rui
-## Version: 1.0.7
+## Version: 1.1.0
 ## IconTexture: 1109100
 ## OptionalDeps: AzeriteUI5_JuNNeZ_Edition
 ## SavedVariables: MythicViewDB

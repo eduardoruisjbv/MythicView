@@ -1,5 +1,10 @@
 # Mythic View — Changelog
 
+## 1.1.0 — Três novos estilos de câmera (2026-10-08)
+
+- Adicionados **The Last of Us Part II** (baixa e colada no ombro, visão fechada, movimento lento e tenso, mira ao conjurar), **Ghost of Tsushima** (média distância, quase centralizada, transições longas e suaves) e **Sekiro: Shadows Die Twice** (mais perto e mais rápida que Elden Ring, foco forte no inimigo, impactos secos).
+- Dez estilos selecionáveis no total, além da câmera PvP competitiva automática.
+
 ## 1.0.7 — Correção de carregamento Lua (2026-10-07)
 
 - Corrigido o excesso de variáveis locais do Lua 5.1 que impedia o carregamento do addon. As funções PvP agora usam o namespace do addon e a tabela de ajustes existente, preservando a câmera PvP fixa e a troca automática.
