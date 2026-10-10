@@ -63,6 +63,7 @@ UI.Options.AddTab({
     CM.SetCrosshairOptionsPreview(false)
   end,
   build = function(ctx)
+    local reactionState = "hostile"
     ctx:Header("CROSSHAIR")
 
     ctx:Toggle({
@@ -106,16 +107,39 @@ UI.Options.AddTab({
       end,
       disabled = CrosshairOff,
     })
-    ctx:Button({
-      layout = "row",
-      label = "Reaction Colors",
-      buttonLabel = "Edit",
-      desc = "Customize the colors used by the crosshair when targeting different types of units.",
-      disabled = CrosshairOff,
-      func = function()
-        CM.OpenCrosshairColorsEditor()
-      end,
-    })
+    if ctx.nativeSettings and ctx.ColorPicker then
+      local reactionStates = { "hostile", "friendly_npc", "friendly_player", "object", "base" }
+      local reactionLabels = {
+        hostile = "Hostile", friendly_npc = "NPC", friendly_player = "Player",
+        object = "Object", base = "Base",
+      }
+      ctx:Dropdown({
+        label = "Reaction Color",
+        desc = "Choose which crosshair reaction color to edit.",
+        values = reactionLabels,
+        order = reactionStates,
+        get = function() return reactionState end,
+        set = function(value) reactionState = value end,
+        disabled = CrosshairOff,
+      })
+      ctx:ColorPicker({
+        label = "Edit Reaction Color",
+        desc = "Choose the color and opacity for the selected crosshair state.",
+        get = function() return CM.GetCrosshairReactionColor(reactionState) end,
+        set = function(r, g, b, a)
+          CM.DB.global.crosshairReactionColors = CM.DB.global.crosshairReactionColors or {}
+          CM.DB.global.crosshairReactionColors[reactionState] = { r, g, b, a }
+          CM.RefreshCrosshairAppearance()
+        end,
+        disabled = CrosshairOff,
+      })
+    else
+      ctx:Button({
+        layout = "row", label = "Reaction Colors", buttonLabel = "Edit",
+        desc = "Customize the colors used by the crosshair when targeting different types of units.",
+        disabled = CrosshairOff, func = function() CM.OpenCrosshairColorsEditor() end,
+      })
+    end
     ctx:Slider({
       label = "Scale",
       desc = "Scales the size of the crosshair.",

@@ -285,6 +285,42 @@ UI.Options.AddTab({
     })
     ctx:Gap(8)
 
+    -- Mythic View's Settings pages use native Blizzard controls. Keep the
+    -- existing custom segmented editor for standalone Combat Mode, but expose
+    -- every click binding directly in the native Settings flow when embedded.
+    if ctx.nativeSettings then
+      for _, group in ipairs(MODIFIER_GROUPS) do
+        ctx:Header(group.label)
+        local prefix = group.modifier and (group.label .. " + ") or ""
+        local leadingIconTexture
+        if group.modifier == "shift" then
+          leadingIconTexture = CM.Constants.ModifierKeyShift
+        elseif group.modifier == "ctrl" then
+          leadingIconTexture = CM.Constants.ModifierKeyCtrl
+        elseif group.modifier == "alt" then
+          leadingIconTexture = CM.Constants.ModifierKeyAlt
+        end
+
+        AddSlot(
+          ctx,
+          Slot(group.modifier, 1),
+          prefix .. "Left Click",
+          group.modifier,
+          "newplayertutorial-icon-mouse-leftbutton",
+          leadingIconTexture
+        )
+        AddSlot(
+          ctx,
+          Slot(group.modifier, 2),
+          prefix .. "Right Click",
+          group.modifier,
+          "newplayertutorial-icon-mouse-rightbutton",
+          leadingIconTexture
+        )
+      end
+      return
+    end
+
     local contentW = ctx.width
     local segmentHost = CreateFrame("Frame", nil, ctx.content)
     segmentHost:SetWidth(contentW)

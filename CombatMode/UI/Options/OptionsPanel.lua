@@ -755,7 +755,17 @@ function CM.OpenOptions()
 end
 
 -- Narrow entry point for Mythic View's Settings panel.
-function addonNS.OpenCombatModeOptions()
+function addonNS.OpenCombatModeOptions(tabID)
+  local categories = addonNS.combatModeCategories
+  local category = categories and categories[tabID or "general"]
+  if category and _G.Settings and _G.Settings.OpenToCategory then
+    _G.Settings.OpenToCategory(category:GetID())
+    return
+  end
+  if addonNS.combatModeCategory and _G.Settings and _G.Settings.OpenToCategory then
+    _G.Settings.OpenToCategory(addonNS.combatModeCategory:GetID())
+    return
+  end
   return CM.OpenOptions()
 end
 

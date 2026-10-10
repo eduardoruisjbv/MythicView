@@ -177,19 +177,66 @@ return false
       text = "Modify Combat Mode's default Reticle Targeting CVars and Targeting Macro Prelines.",
       warning = "Warning: editing these values could break Reticle Targeting and Target Lock.",
     })
-    ctx:ButtonRow({
-      {
-        label = "Reticle Targeting CVar Editor",
-        func = function()
-          CM.OpenReticleTargetingCVarEditor()
+    if ctx.nativeSettings then
+      local prelineDefaults = CM.TargetingMacroPrelinesDefaults or {}
+      local prelineFields = {
+        { "Target Enemies + No Auto Lock", "targetingMacroPrelineEnemyOverride", "enemy" },
+        { "Target Enemies + Auto Lock", "targetingMacroPrelineAutoLockEnemyOverride", "autoLockEnemy" },
+        { "Target Any Unit + No Auto Lock", "targetingMacroPrelineAnyOverride", "any" },
+        { "Target Any Unit + Auto Lock", "targetingMacroPrelineAutoLockAnyOverride", "autoLockAny" },
+      }
+      for _, field in ipairs(prelineFields) do
+        local label, dbKey, defaultKey = field[1], field[2], field[3]
+        ctx:TextInput({
+          label = "Macro Preline: " .. label,
+          desc = "Edit the targeting macro preline used for this state.",
+          multiline = 4,
+          get = function()
+            return CM.DB.global[dbKey] or prelineDefaults[defaultKey] or ""
+          end,
+          set = function(value)
+            CM.DB.global[dbKey] = value:gsub("\r", ""):sub(1, CM.TargetingMacroPrelineMaxLen or 129)
+            if CM.RefreshClickCastMacros then CM.RefreshClickCastMacros() end
+          end,
+        })
+      end
+      ctx:TextInput({
+        label = "Reticle Targeting CVar Overrides",
+        desc = "One override per line, formatted as CVar=value. Leave a value empty to clear it.",
+        multiline = 8,
+        get = function()
+          local rows = CM.ReticleCVarEditorData and CM.ReticleCVarEditorData.GetRows()
+          local lines = {}
+          for _, row in ipairs(rows or {}) do
+            if row.isOverridden then lines[#lines + 1] = row.cvar .. "=" .. row.overrideValue end
+          end
+          table.sort(lines)
+          return table.concat(lines, "\n")
         end,
-      },
-      {
-        label = "Targeting Macro Prelines Editor",
-        func = function()
-          CM.OpenTargetingMacroPrelinesEditor()
+        set = function(input)
+          local data = CM.ReticleCVarEditorData
+          if not data then return end
+          local seen = {}
+          for line in input:gmatch("[^\n]+") do
+            local cvar, value = line:match("^%s*([^=]+)%s*=%s*(.-)%s*$")
+            if cvar then
+              cvar = cvar:gsub("%s+$", "")
+              seen[cvar] = true
+              data.SetOverride(cvar, value)
+            end
+          end
+          local existing = data.GetOverrides()
+          for cvar in pairs(existing) do
+            if not seen[cvar] then data.SetOverride(cvar, "") end
+          end
         end,
-      },
-    })
+      })
+      ctx:Description("Changes take effect using Mythic View's native Settings page. The standalone Combat Mode editors remain available only from its own slash command.")
+    else
+      ctx:ButtonRow({
+        { label = "Reticle Targeting CVar Editor", func = function() CM.OpenReticleTargetingCVarEditor() end },
+        { label = "Targeting Macro Prelines Editor", func = function() CM.OpenTargetingMacroPrelinesEditor() end },
+      })
+    end
   end,
 })

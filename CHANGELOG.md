@@ -1,5 +1,23 @@
 # Mythic View — Changelog
 
+## 2.0.0 — Unified action-combat release (2026-10-10)
+
+### Added
+
+- Integrated Combat Mode's mouse look, reticle targeting, crosshair, click casting, Auto Unlock, and Ally Cycle into Mythic View's Settings pages.
+- Added Blizzard-native key binding rows, reaction color selection, and settings controls for click-cast actions and advanced targeting configuration.
+- Added guidance tags to settings: Recommended, Optional, Not recommended, and Advanced.
+
+### Changed
+
+- Mythic View now owns the combined camera and action-combat settings experience. Combat controls opened from Mythic View use the same native Settings interface.
+- Combat Mode data is stored under `MythicViewDB.combatMode`; use `scripts/migrate_combatmode_sv.py` after closing WoW to migrate settings from the standalone addon's saved variables.
+
+### Fixed
+
+- Fixed Combat Mode changelog initialization when embedded in Mythic View.
+- Fixed settings controls that opened Combat Mode-styled windows and corrected clipped settings legend text.
+
 ## 1.2.0 — Integrated Combat Mode (2026-10-10)
 
 - Added Combat Mode's mouse look, crosshair, reticle targeting, click casting, interaction HUD, and ally cycling inside Mythic View.

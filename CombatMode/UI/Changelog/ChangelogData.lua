@@ -2,8 +2,8 @@
 --  UI/Changelog/ChangelogData.lua - changelog body for in-game viewer
 --  Regenerate from CHANGELOG.md:  scripts\sync-changelog-to-lua.ps1
 ---------------------------------------------------------------------------------------
-local _G = _G
-local CM = _G.CM
+local _, addonNS = ...
+local CM = addonNS.CombatMode
 
 CM.Config = CM.Config or {}
 CM.Config.ChangelogText = [[

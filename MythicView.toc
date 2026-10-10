@@ -3,7 +3,7 @@
 ## Notes: Contextual action camera and integrated action-combat controls.
 ## Notes-ptBR: Câmera contextual e controles de combate em estilo de ação integrados.
 ## Author: Eduardo Rui
-## Version: 1.2.0
+## Version: 2.0.0
 ## X-Contributors: justice7ca, sampconrad
 ## X-CombatMode-Upstream: https://github.com/djsmithdev/combatmode/tree/10bd846d1aec4b00b2f6f85df54414eb361e7902
 ## IconTexture: 1109100

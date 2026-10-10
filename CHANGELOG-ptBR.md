@@ -1,5 +1,23 @@
 # Mythic View — Changelog
 
+## 2.0.0 — Lançamento da integração de combate (2026-10-10)
+
+### Adicionado
+
+- Integração do mouse look, reticle targeting, crosshair, click casting, Auto Unlock e Ally Cycle nas páginas de configurações do Mythic View.
+- Controles nativos do WoW para vínculos de teclas, cores de reação e configurações avançadas de targeting.
+- Tags de orientação nas opções: Recommended, Optional, Not recommended e Advanced.
+
+### Alterado
+
+- O Mythic View agora reúne as configurações da câmera e do combate em uma interface nativa de Settings.
+- Os dados do Combat Mode ficam em `MythicViewDB.combatMode`. Para migrar os dados do addon independente, execute `scripts/migrate_combatmode_sv.py` com o WoW fechado.
+
+### Corrigido
+
+- Inicialização do changelog do Combat Mode quando integrado ao Mythic View.
+- Janelas com estilo do Combat Mode abertas pelas configurações integradas e texto cortado na legenda.
+
 ## 1.1.0 — Três novos estilos de câmera (2026-10-08)
 
 - Adicionados **The Last of Us Part II** (baixa e colada no ombro, visão fechada, movimento lento e tenso, mira ao conjurar), **Ghost of Tsushima** (média distância, quase centralizada, transições longas e suaves) e **Sekiro: Shadows Die Twice** (mais perto e mais rápida que Elden Ring, foco forte no inimigo, impactos secos).

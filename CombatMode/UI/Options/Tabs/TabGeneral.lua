@@ -104,6 +104,7 @@ UI.Options.AddTab({
 
     ctx:Keybind({
       label = "Mouse Look Keybind",
+      action = "Combat Mode - Mouse Look",
       desc = "Tap to toggle Mouse Look. Hold to unlock the cursor temporarily.",
       get = function()
         return (GetBindingKey("Combat Mode - Mouse Look"))
@@ -119,6 +120,7 @@ UI.Options.AddTab({
     if IsMacClient() then
       ctx:Keybind({
         label = "Reset Mouse Look",
+        action = "Combat Mode - Reset Mouse Look",
         desc = "Recover a stuck cursor after switching windows on macOS. Re-grabs and releases Mouse Look to clear a capture the game left stuck while running in the background.",
         get = function()
           return (GetBindingKey("Combat Mode - Reset Mouse Look"))
@@ -202,6 +204,7 @@ UI.Options.AddTab({
 
     ctx:Keybind({
       label = "Interact Keybind",
+      action = "INTERACTTARGET",
       desc = "Tap to interact with the unit chosen below.",
       get = function()
         return GetInteractBindingKey()

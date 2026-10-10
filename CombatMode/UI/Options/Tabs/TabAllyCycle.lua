@@ -77,6 +77,7 @@ UI.Options.AddTab({
 
     ctx:Keybind({
       label = "Ally Cycle - Next",
+      action = CM.AllyCycleBindUp or "Combat Mode - Ally Cycle Next",
       desc = "Target the next group member.",
       get = function()
         return GetBindingKey(CM.AllyCycleBindUp or "Combat Mode - Ally Cycle Next")
@@ -95,6 +96,7 @@ UI.Options.AddTab({
     })
     ctx:Keybind({
       label = "Ally Cycle - Previous",
+      action = CM.AllyCycleBindDown or "Combat Mode - Ally Cycle Previous",
       desc = "Target the previous group member.",
       get = function()
         return GetBindingKey(CM.AllyCycleBindDown or "Combat Mode - Ally Cycle Previous")

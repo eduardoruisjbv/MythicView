@@ -135,6 +135,7 @@ UI.Options.AddTab({
 
     ctx:Keybind({
       label = "Target Lock Keybind",
+      action = "Combat Mode - Toggle Focus Target",
       desc = "Tap to lock the reticle to your target, preventing it from swapping. Tap again to unlock.\n"
         .. "Follows Reticle Targeting settings.",
       get = function()
@@ -151,6 +152,7 @@ UI.Options.AddTab({
     })
     ctx:Keybind({
       label = "Cycle Lock - Next",
+      action = "Combat Mode - Cycle Focus Next",
       desc = "Move Target Lock to the next valid nearby target.",
       get = function()
         return GetBindingKey("Combat Mode - Cycle Focus Next")
@@ -166,6 +168,7 @@ UI.Options.AddTab({
     })
     ctx:Keybind({
       label = "Cycle Lock - Previous",
+      action = "Combat Mode - Cycle Focus Previous",
       desc = "Move Target Lock to the previous valid nearby target.",
       get = function()
         return GetBindingKey("Combat Mode - Cycle Focus Previous")
