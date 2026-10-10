@@ -1953,8 +1953,26 @@ local function OnManualZoom()
 end
 
 local function SaveCameraSettings()
+  MythicViewDB.cameraCVarBaseline = MythicViewDB.cameraCVarBaseline or {}
+  local baseline = MythicViewDB.cameraCVarBaseline
+
+  -- SavedVariables survive a client crash only after WoW has saved them at
+  -- least once. Keep this baseline across clean logouts so a later login can
+  -- distinguish the addon's persisted camera values from the user's settings.
+  -- Missing entries are a migration path for CVars added in newer versions.
+  local function rememberOriginal(name)
+    local saved = baseline[name]
+    if saved ~= nil then
+      originalCVars[name] = tostring(saved)
+    else
+      local current = GetCVar(name)
+      originalCVars[name] = current
+      if current ~= nil then baseline[name] = current end
+    end
+  end
+
   for _, name in ipairs(CAMERA_CVARS) do
-    originalCVars[name] = GetCVar(name)
+    rememberOriginal(name)
   end
 
   -- These Blizzard accessibility options suppress the horizontal shoulder offset.
@@ -1966,7 +1984,7 @@ local function SaveCameraSettings()
   -- A CVar this client lacks stays nil and is never touched.
   for _, group in ipairs({ FEEL.collision, FEEL.follow, FEEL.dynamicPitch }) do
     for name in pairs(group) do
-      originalCVars[name] = GetCVar(name)
+      rememberOriginal(name)
     end
   end
 end
@@ -2181,6 +2199,14 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     return
   elseif event == "PLAYER_LOGOUT" then
     RestoreCameraSettings()
+    -- Keep a clean, confirmed baseline in SavedVariables. Do not clear it:
+    -- the next client session may end without PLAYER_LOGOUT being delivered.
+    MythicViewDB.cameraCVarBaseline = MythicViewDB.cameraCVarBaseline or {}
+    for name, value in pairs(originalCVars) do
+      if value ~= nil then
+        MythicViewDB.cameraCVarBaseline[name] = value
+      end
+    end
     return
   elseif event == "PLAYER_MOUNT_DISPLAY_CHANGED" then
     -- This event can fire for display/animation refreshes while already
