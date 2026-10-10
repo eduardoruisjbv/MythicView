@@ -1,0 +1,577 @@
+---------------------------------------------------------------------------------------
+--  Core/Runtime/Runtime.lua — RUNTIME — addon shell, DB, slash, OnUpdate
+---------------------------------------------------------------------------------------
+--  What it does: Receives the nested MythicView addon namespace, TOC METADATA,
+--  MythicViewDB.combatMode merge, slash `/cm` `/combatmode`,
+--  lifecycle (ADDON_LOADED / PLAYER_LOGIN → OnInitialize / OnEnable), Rematch
+--  coordination, throttled CombatMode_OnUpdate (free-look + crosshair reaction),
+--  welcome/changelog scheduling, and a guarded legacy uninstall entry point.
+--  Architecture / how it works:
+--    • InitDatabase merges Constants.DatabaseDefaults into global + char["Name - Realm"],
+--      then coerces Forever-style 1/0 flags to real booleans (CM.DbBool / NormalizeBools)
+--      wherever defaults declare a boolean — so == true / ~= false / if x stay correct.
+--      Also drops leftover global.partyRadial (feature removed in 4.7.0).
+--      Rewrites the shipped situational default (dead-or-stealth + Arrows) to
+--      dead-only + Invisible when the saved values still match that default.
+--    • GetBindingsLocation → "global" vs "char" from useGlobalBindings.
+--    • RuntimeRematch reapplies CVars/bindings/crosshair after PEW / rematch events.
+--    • OnEnable registers root-frame events (via Bootstrap path) and starts freelook.
+--    • The standalone uninstall action is unavailable in the integrated addon.
+--    • DebugPrint / DebugPrintThrottled gated by debugMode.
+--  Does not: Own SetCVar helpers (CVarManager) or category dispatch (EventRouter).
+--  Related: Core/Runtime/Bootstrap.lua, Core/Runtime/EventRouter.lua,
+--  Core/Runtime/CVarManager.lua, Core/FreeLook/FreeLookController.lua,
+--  Core/Crosshair/Crosshair.lua, UI/Options/OptionsPanel.lua,
+--  UI/Changelog/ChangelogPanel.lua
+---------------------------------------------------------------------------------------
+local addonName, addonNS = ...
+addonNS.CombatMode = addonNS.CombatMode or {}
+local CM = addonNS.CombatMode
+local _G = _G
+
+-- The integrated module is available through Mythic View's addon namespace.
+CM.IntegratedCameraOwner = true
+
+-- WoW API
+local C_AddOns = _G.C_AddOns
+local C_Timer = _G.C_Timer
+local CreateFrame = _G.CreateFrame
+local GetAddOnMetadata = C_AddOns.GetAddOnMetadata
+local GetMacroInfo = _G.GetMacroInfo
+local GetRealmName = _G.GetRealmName
+local GetTime = _G.GetTime
+local InCombatLockdown = _G.InCombatLockdown
+local IsAddOnLoaded = C_AddOns.IsAddOnLoaded
+local IsMouselooking = _G.IsMouselooking
+local MouselookStop = _G.MouselookStop
+local ReloadUI = _G.ReloadUI
+local UnitName = _G.UnitName
+
+-- Lua stdlib
+local ipairs = _G.ipairs
+local pairs = _G.pairs
+local string_sub = _G.string.sub
+local string_upper = _G.string.upper
+local type = _G.type
+local tostring = _G.tostring
+
+---------------------------------------------------------------------------------------
+--                                 UTILITY FUNCTIONS                                 --
+---------------------------------------------------------------------------------------
+local function FetchDataFromTOC()
+  local dataReturned = {}
+  local keysToFetch = {
+    "Version",
+    "Title",
+    "Notes",
+    "Author",
+    "X-Discord",
+    "X-Curse",
+    "X-Contributors",
+  }
+
+  for _, key in ipairs(keysToFetch) do
+    dataReturned[string_upper(key)] = GetAddOnMetadata(addonName, key)
+  end
+
+  return dataReturned
+end
+
+CM.METADATA = FetchDataFromTOC()
+
+function CM.DebugPrint(statement)
+  if not (CM.DB and CM.DB.global and CM.DB.global.debugMode) then
+    return
+  end
+  print(CM.Constants.BasePrintMsg .. "|cff909090: " .. tostring(statement) .. "|r")
+end
+
+local debugThrottleLastAt = {}
+--- Throttle repeated debug lines per logical channel (seconds). Requires debug mode on.
+function CM.DebugPrintThrottled(key, msg, intervalSec)
+  if not (CM.DB and CM.DB.global and CM.DB.global.debugMode) then
+    return
+  end
+  intervalSec = intervalSec or 3
+  local now = GetTime()
+  local last = debugThrottleLastAt[key] or 0
+  if now - last <= intervalSec then
+    return
+  end
+  debugThrottleLastAt[key] = now
+  CM.DebugPrint(msg)
+end
+
+--- Which DB root holds mouselook click bindings ("char" vs "global").
+function CM.GetBindingsLocation()
+  return CM.DB.char.useGlobalBindings and "global" or "char"
+end
+
+-- Locale-appropriate font file from a Blizzard FontObject (ru/zh/etc.); avoids Latin-only Friz for unit names.
+local FALLBACK_UI_FONT_PATH = "Fonts\\FRIZQT__.TTF"
+
+function CM.SetFontStringFromTemplate(fontString, pixelSize, templateFontObject)
+  if not fontString or not pixelSize then
+    return
+  end
+  local template = templateFontObject or _G.GameFontNormalSmall
+  local path, flags
+  if template and template.GetFont then
+    path, _, flags = template:GetFont()
+  end
+  if type(path) ~= "string" or path == "" then
+    path = FALLBACK_UI_FONT_PATH
+  end
+  fontString:SetFont(path, pixelSize, flags)
+end
+
+local function OpenConfigPanel()
+  -- Standalone options window (UI/Options/OptionsPanel.lua). Combat guard is
+  -- handled inside CM.OpenOptions.
+  if CM.OpenOptions then
+    CM.OpenOptions()
+  end
+end
+
+local function ScheduleChangelogIfNewVersion()
+  C_Timer.After(0.5, function()
+    if CM.Config and CM.Config.MaybeShowChangelogOnNewVersion then
+      CM.Config.MaybeShowChangelogOnNewVersion()
+    end
+  end)
+end
+
+local function DisplayPopup()
+  -- Debug Mode re-plays the first-install welcome on every reload so the themed
+  -- welcome modal can be verified without wiping SavedVariables.
+  local debugMode = CM.DB.global and CM.DB.global.debugMode
+  if (CM.DB.char.seenWarning and not debugMode) or not (CM.UI and CM.UI.ShowWelcome) then
+    return false
+  end
+
+  -- Defer past Blizzard's load-end CloseSpecialWindows / UI reset. Showing a modal
+  -- synchronously in OnEnable gets torn down immediately (OnHide → opens options +
+  -- changelog), which is why the welcome appeared "missing" while the changelog still
+  -- showed.
+  CM.DebugPrint("Scheduling first-install welcome modal")
+  C_Timer.After(0.75, function()
+    if not (CM.UI and CM.UI.ShowWelcome) then
+      return
+    end
+    if CM.DB.char.seenWarning and not (CM.DB.global and CM.DB.global.debugMode) then
+      ScheduleChangelogIfNewVersion()
+      return
+    end
+    CM.DebugPrint("Showing first-install welcome modal")
+    CM.UI.ShowWelcome(CM.Constants.PopupMsg, function()
+      CM.DB.char.seenWarning = true
+      OpenConfigPanel()
+      ScheduleChangelogIfNewVersion()
+    end)
+  end)
+  return true
+end
+
+function CM.MacroExists(name)
+  return GetMacroInfo(name) ~= nil
+end
+
+--[[
+  Checking if DynamicCam or SteadyCam are loaded so we can relinquish camera controls.
+  Autofocus Locked Target stays with Combat Mode. When shoulderFollowsMouseLook is on,
+  permanent unlock still eases shoulder to 0 (then restores on re-lock).
+]]
+--
+local function IsCamAddonLoaded()
+  CM.SteadyCam = IsAddOnLoaded("SteadyCam")
+  CM.DynamicCam = IsAddOnLoaded("DynamicCam")
+
+  CM.CameraOwner = "MythicView"
+
+  if CM.CameraOwner and not CM.DB.global.silenceAlerts then
+    print(
+      CM.Constants.BasePrintMsg
+        .. "|cff909090: |cffE52B50"
+        .. CM.CameraOwner
+        .. " detected!|r Camera framing and target focus are managed by Mythic View.|r"
+    )
+  end
+end
+
+---------------------------------------------------------------------------------------
+--                              SAVED VARIABLES (NATIVE)                             --
+---------------------------------------------------------------------------------------
+-- AceDB-compatible shape under MythicViewDB.combatMode.
+-- Application code keeps using CM.DB.global / CM.DB.char.
+
+local function DeepCopy(src)
+  if type(src) ~= "table" then
+    return src
+  end
+  local copy = {}
+  for k, v in pairs(src) do
+    copy[k] = DeepCopy(v)
+  end
+  return copy
+end
+
+-- Saved texture choices from the standalone addon contain absolute addon
+-- paths. Convert only its exact legacy prefix; repeated loads are harmless.
+local function RewriteLegacyAssetPaths(root)
+  local oldPrefix = "Interface\\AddOns\\CombatMode\\"
+  local newPrefix = "Interface\\AddOns\\MythicView\\CombatMode\\"
+  local seen = {}
+  local function visit(t)
+    if seen[t] then return end
+    seen[t] = true
+    for key, value in pairs(t) do
+      if type(value) == "table" then
+        visit(value)
+      elseif type(value) == "string" and string_sub(value, 1, #oldPrefix) == oldPrefix then
+        t[key] = newPrefix .. string_sub(value, #oldPrefix + 1)
+      end
+    end
+  end
+  visit(root)
+end
+
+--- Coerce SavedVariables truthy flags. Forever may store 1/0 instead of true/false;
+--- Lua treats 0 as truthy, and `x == true` fails for 1 — both break feature gates.
+function CM.DbBool(value, default)
+  if value == nil then
+    return default and true or false
+  end
+  if value == false or value == 0 then
+    return false
+  end
+  if value == true or value == 1 then
+    return true
+  end
+  return not not value
+end
+
+--- Where defaults declare a boolean, rewrite Forever 1/0 (and keep real bools) in place.
+local function NormalizeBools(dest, defaults)
+  if type(dest) ~= "table" or type(defaults) ~= "table" then
+    return
+  end
+  for k, def in pairs(defaults) do
+    local cur = dest[k]
+    if type(def) == "boolean" then
+      if cur ~= nil then
+        dest[k] = CM.DbBool(cur, def)
+      end
+    elseif type(def) == "table" and type(cur) == "table" then
+      NormalizeBools(cur, def)
+    end
+  end
+end
+
+--- Fill missing keys from defaults (nested). Does not overwrite existing user values.
+local function MergeDefaults(dest, defaults)
+  if type(defaults) ~= "table" then
+    return dest
+  end
+  if type(dest) ~= "table" then
+    dest = {}
+  end
+  for k, v in pairs(defaults) do
+    if type(v) == "table" then
+      if type(dest[k]) ~= "table" then
+        dest[k] = DeepCopy(v)
+      else
+        MergeDefaults(dest[k], v)
+      end
+    elseif dest[k] == nil then
+      dest[k] = v
+    end
+  end
+  return dest
+end
+
+local function GetCharKey()
+  local name = UnitName("player") or "Unknown"
+  local realm = GetRealmName() or "Unknown"
+  return name .. " - " .. realm
+end
+
+local function BindDatabaseViews(sv, charKey)
+  CM.DB = {
+    global = sv.global,
+    char = sv.char[charKey],
+  }
+end
+
+function CM.InitDatabase()
+  local defaults = CM.Constants.DatabaseDefaults
+  _G.MythicViewDB = _G.MythicViewDB or {}
+  local root = _G.MythicViewDB
+  -- A legacy DB can be copied only when the old addon has already loaded it.
+  -- The host's migration path handles the separate legacy SavedVariables file.
+  if type(root.combatMode) ~= "table" then
+    root.combatMode = type(_G.CombatModeDB) == "table" and DeepCopy(_G.CombatModeDB) or {}
+  end
+  local sv = root.combatMode
+  RewriteLegacyAssetPaths(sv)
+
+  sv.global = MergeDefaults(sv.global or {}, defaults.global or {})
+  NormalizeBools(sv.global, defaults.global or {})
+
+  if type(sv.char) ~= "table" then
+    sv.char = {}
+  end
+  local charKey = GetCharKey()
+  sv.char[charKey] = MergeDefaults(sv.char[charKey] or {}, defaults.char or {})
+  NormalizeBools(sv.char[charKey], defaults.char or {})
+
+  BindDatabaseViews(sv, charKey)
+  -- Party Radial removed in 4.7.0; drop leftover settings so they do not linger in SV.
+  if sv.global then
+    sv.global.partyRadial = nil
+    local oldSituational = 'local deadOrGhost = UnitIsDeadOrGhost and UnitIsDeadOrGhost("player")\n'
+      .. "local isPlayerStealthed = IsStealthed and IsStealthed()\n"
+      .. "if deadOrGhost or isPlayerStealthed then\n"
+      .. "  return true end\n"
+      .. "return false\n"
+    local function TrimEnd(text)
+      return (text:gsub("%s+$", ""))
+    end
+    if
+      type(sv.global.crosshairSituationalCondition) == "string"
+      and TrimEnd(sv.global.crosshairSituationalCondition) == TrimEnd(oldSituational)
+    then
+      sv.global.crosshairSituationalCondition = defaults.global.crosshairSituationalCondition
+      local appearance = sv.global.crosshairSituationalAppearance
+      if type(appearance) == "table" and appearance.Name == "Arrows" then
+        sv.global.crosshairSituationalAppearance = CM.Constants.CrosshairSituationalHidden
+      end
+    end
+  end
+  if CM.MigrateMouseLookCameraDB then
+    CM.MigrateMouseLookCameraDB()
+  end
+end
+
+function CM:OnResetDB()
+  CM.DebugPrint("Reseting Combat Mode settings.")
+  local defaults = CM.Constants.DatabaseDefaults
+  local sv = _G.MythicViewDB and _G.MythicViewDB.combatMode or {}
+
+  -- Keep the pre-CM CVar snapshot so Uninstall still restores the player's original
+  -- values after a settings wipe. (Next enable refreshes it before CM writes.)
+  local priorCVars = CM.DB and CM.DB.global and CM.DB.global.priorCVarSnapshot
+
+  for k in pairs(sv) do
+    sv[k] = nil
+  end
+  _G.MythicViewDB = _G.MythicViewDB or {}
+  _G.MythicViewDB.combatMode = sv
+
+  local charKey = GetCharKey()
+  sv.global = DeepCopy(defaults.global or {})
+  sv.char = {
+    [charKey] = DeepCopy(defaults.char or {}),
+  }
+  if type(priorCVars) == "table" then
+    sv.global.priorCVarSnapshot = priorCVars
+  end
+  BindDatabaseViews(sv, charKey)
+  ReloadUI()
+end
+
+-- The standalone uninstall function remains as a harmless legacy entry point.
+-- The standalone uninstall path disabled addonName; here addonName is
+-- MythicView, so it cannot be used for the integrated module.
+function CM.UninstallCombatMode()
+  print(CM.Constants.BasePrintMsg .. "|cff909090: Combat Mode is integrated with Mythic View; the standalone uninstall action is unavailable.|r")
+end
+
+---------------------------------------------------------------------------------------
+--                                   EVENT HANDLING                                  --
+---------------------------------------------------------------------------------------
+-- Rematch is called after every reload and this is where we make sure our config persists
+local function Rematch()
+  -- Bootstrap already captured; Ensure is a no-op once sessionSnapshotCaptured is set.
+  if CM.EnsurePriorCVarSnapshot then
+    CM.EnsurePriorCVarSnapshot()
+  end
+  IsCamAddonLoaded()
+
+  IsCamAddonLoaded()
+
+  CM.SetMouseLookSpeed()
+  if CM.SetDynamicPitch then
+    CM.SetDynamicPitch()
+  end
+  if CM.SetShoulderOffset then
+    CM.SetShoulderOffset()
+  end
+  if CM.SyncTargetFocusFromFocusUnit then
+    CM.SyncTargetFocusFromFocusUnit()
+  end
+  -- ApplyMouseLookCamera (MS + shoulder retarget) also runs from LockFreeLook.
+
+  if CM.DB.char.reticleTargeting then
+    CM.ConfigReticleTargeting("combatmode")
+
+    if not CM.DB.char.reticleTargetingEnemyOnly then
+      CM.HandleSoftTargetFriend(true)
+    end
+  elseif CM.IsCrosshairEnabled() and CM.IsInteractionHUDEnabled() then
+    CM.ConfigInteractionHUDSoftTarget()
+  end
+
+  CM.OnRematchCrosshair()
+
+  -- Early OnUpdate can start mouselook before Rematch; CursorFreelookCentering only
+  -- hides the cursor across a fresh start (force 0 → Start → deferred 1). Bounce so
+  -- LockFreeLook is not a no-op when already looking.
+  if IsMouselooking() then
+    MouselookStop()
+  end
+  CM.LockFreeLook()
+end
+
+CM.RuntimeRematch = Rematch
+
+---------------------------------------------------------------------------------------
+--                                   GAME STATE LOOP                                 --
+---------------------------------------------------------------------------------------
+--[[
+The game engine will call the OnUpdate function once each frame.
+This is (in most cases) extremely excessive, hence why we're adding a throttle.
+]]
+--
+local ON_UPDATE_INTERVAL = 0.15
+local TIME_SINCE_LAST_UPDATE = 0
+function _G.CombatMode_OnUpdate(_, elapsed)
+  -- Making this thread-safe by keeping track of the last update cycle
+  TIME_SINCE_LAST_UPDATE = TIME_SINCE_LAST_UPDATE + elapsed
+
+  -- As the frame watching doesn't need to perform a visibility check every frame, we're adding a stagger
+  if TIME_SINCE_LAST_UPDATE >= ON_UPDATE_INTERVAL then
+    TIME_SINCE_LAST_UPDATE = 0
+
+    CM.Profile("CombatMode_OnUpdate:fullTick", function()
+      if CM.IsDefaultMouseActionBeingUsed() then
+        return
+      end
+
+      local isMouselooking = IsMouselooking()
+
+      if CM.ShouldFreeLookBeOff() then
+        CM.UnlockFreeLook()
+        return
+      end
+
+      -- OPie may rematch mouselook itself after freeing CursorFreelookCentering; a plain
+      -- LockFreeLook no-ops when already looking and leaves the cursor visible.
+      if not (CM.RematchFreeLookAfterOpieIfNeeded and CM.RematchFreeLookAfterOpieIfNeeded()) then
+        if not isMouselooking then
+          CM.LockFreeLook()
+        end
+      end
+
+      CM.Profile("UpdateCrosshairReaction", CM.UpdateCrosshairReaction)
+      if CM.UpdateCrosshairAssistedHighlight then
+        CM.Profile("UpdateCrosshairAssistedHighlight", CM.UpdateCrosshairAssistedHighlight)
+      end
+    end)
+  end
+end
+
+---------------------------------------------------------------------------------------
+--                            KEYBIND FUNCTIONS & COMMANDS                           --
+---------------------------------------------------------------------------------------
+-- FUNCTIONS CALLED FROM BINDINGS.XML
+
+-- CREATING /CM CHAT COMMAND — opens the standalone options window.
+function CM:OpenConfigCMD()
+  OpenConfigPanel()
+end
+
+local function RegisterSlashCommands()
+  _G.SLASH_COMBATMODE1 = "/cm"
+  _G.SLASH_COMBATMODE2 = "/combatmode"
+  _G.SlashCmdList["COMBATMODE"] = function()
+    CM:OpenConfigCMD()
+  end
+end
+
+---------------------------------------------------------------------------------------
+--                                   LIFECYCLE                                       --
+---------------------------------------------------------------------------------------
+local initialized = false
+local enabled = false
+
+function CM:OnInitialize()
+  if initialized then
+    return
+  end
+  initialized = true
+  CM.InitDatabase()
+  RegisterSlashCommands()
+end
+
+function CM:OnEnable()
+  if enabled then
+    return
+  end
+  enabled = true
+
+  CM.ApplyThirdPartyActionBarPolicy()
+
+  CM.BootstrapFeatureModules()
+  CM.BuildEventCategoryMap()
+
+  -- Register Blizzard events on the root XML frame (OnEvent → CombatMode_OnEvent).
+  local frame = _G.CombatModeFrame
+  if frame then
+    for eventName in pairs(CM.GetEventCategoryMap()) do
+      frame:RegisterEvent(eventName)
+    end
+  end
+
+  -- Greeting message that is printed to chat on initial load
+  if not CM.DB.global.silenceAlerts then
+    print(
+      CM.Constants.BasePrintMsg
+        .. "|cff909090: Type |cff69ccf0/cm|r or |cff69ccf0/combatmode|r for settings.|r"
+    )
+  end
+
+  -- Mythic View owns first-run messaging; the upstream welcome and changelog
+  -- remain available from this module's options without opening at login.
+end
+
+function CM:OnDisable(skipCVarRestore)
+  if not enabled then
+    return
+  end
+  enabled = false
+  CM.HideCrosshairFrame()
+  if not skipCVarRestore and CM.RestorePriorCVars then
+    CM.RestorePriorCVars()
+  end
+  local frame = _G.CombatModeFrame
+  if frame then
+    frame:UnregisterAllEvents()
+  end
+end
+
+-- Bootstrap frame: ADDON_LOADED / PLAYER_LOGIN (CombatModeFrame is created later in Embeds).
+local lifecycle = CreateFrame("Frame")
+lifecycle:RegisterEvent("ADDON_LOADED")
+lifecycle:RegisterEvent("PLAYER_LOGIN")
+lifecycle:SetScript("OnEvent", function(self, event, arg1)
+  if event == "ADDON_LOADED" then
+    if arg1 ~= addonName then
+      return
+    end
+    CM:OnInitialize()
+    self:UnregisterEvent("ADDON_LOADED")
+  elseif event == "PLAYER_LOGIN" then
+    CM:OnEnable()
+    self:UnregisterEvent("PLAYER_LOGIN")
+  end
+end)

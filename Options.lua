@@ -22,6 +22,42 @@ function ns.OpenOptions()
   end
 end
 
+local function RegisterCombatControlsSubcategory(parentCategory)
+  if not Settings.RegisterCanvasLayoutSubcategory then return end
+
+  local panel = CreateFrame("Frame")
+  local title = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
+  title:SetPoint("CENTER", panel, "CENTER", 0, 80)
+  title:SetText("Combat controls")
+
+  local description = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+  description:SetPoint("TOP", title, "BOTTOM", 0, -16)
+  description:SetWidth(460)
+  description:SetJustifyH("CENTER")
+  description:SetText("Mouse look, reticle targeting, click casting, crosshair, and ally cycling.")
+
+  local button = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  button:SetSize(220, 28)
+  button:SetPoint("TOP", description, "BOTTOM", 0, -24)
+  button:SetText("Open combat controls")
+  button:SetScript("OnClick", function()
+    if not ns.OpenCombatModeOptions then return end
+    local settingsPanel = _G.SettingsPanel
+    if settingsPanel and settingsPanel:IsShown() then
+      if HideUIPanel then
+        HideUIPanel(settingsPanel)
+      else
+        settingsPanel:Hide()
+      end
+    end
+    ns.OpenCombatModeOptions()
+  end)
+
+  ns.combatModeCategory = Settings.RegisterCanvasLayoutSubcategory(
+    parentCategory, panel, "Combat controls"
+  )
+end
+
 function ns.BuildOptions()
   if ns.category then return end
   if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterAddOnSetting) then
@@ -128,4 +164,5 @@ function ns.BuildOptions()
 
   Settings.RegisterAddOnCategory(category)
   ns.category = category
+  RegisterCombatControlsSubcategory(category)
 end

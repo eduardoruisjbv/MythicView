@@ -1,0 +1,30 @@
+## Interface: 120105, 120100, 16001, 50504, 40402, 38002, 30405, 20506, 11509
+## Interface-Forever: 16001
+## Interface-Mists: 50504
+## Interface-Cata: 40402
+## Interface-Titan: 38002
+## Interface-Wrath: 30405
+## Interface-BCC: 20506
+## Interface-Classic: 11509
+## Version: 4.8.2
+
+## Title: |A:::|a|TInterface\AddOns\MythicView\CombatMode\assets\cmtitle:22:95|t
+## Notes: Combat Mode brings modern action-game controls to World of Warcraft, replacing traditional tab-targeting with intuitive aiming, more engaging controls, and immersive combat.
+## Author: justice7ca, sampconrad
+
+## IconTexture: Interface\AddOns\MythicView\CombatMode\assets\cmlogo
+
+## DefaultState: enabled
+## LoadOnDemand: 0
+## SavedVariables: CombatModeDB
+
+## X-Category: Misc
+## X-Curse-Project-ID: 282870
+## X-Wago-ID: rN4kqAGD
+## X-Curse: curseforge.com/wow/addons/combat-mode
+## X-Wago: addons.wago.io/addons/combat-mode
+## X-Github: github.com/djsmithdev/combatmode
+## X-Discord: discord.gg/5mwBSmz
+
+# Imports
+Embeds.xml

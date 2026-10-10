@@ -1769,10 +1769,16 @@ SlashCmdList.MYTHICVIEW = function(message)
   local command = (message or ""):lower():match("^%s*(.-)%s*$")
   if command == "lock" then
     MythicView_ToggleLockOn()
+  elseif command == "combat" then
+    if ns.OpenCombatModeOptions then
+      ns.OpenCombatModeOptions()
+    else
+      print("|cffd9bf8cMythic View|r: combat controls are unavailable.")
+    end
   elseif ns.OpenOptions then
     ns.OpenOptions()
   else
-    print("|cffd9bf8cMythic View|r: /mv — menu, /mv lock — travar/soltar o alvo atual.")
+    print("|cffd9bf8cMythic View|r: /mv — menu, /mv combat — combat controls, /mv lock — travar/soltar o alvo atual.")
   end
 end
 

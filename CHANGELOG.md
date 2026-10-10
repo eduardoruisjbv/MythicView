@@ -1,5 +1,13 @@
 # Mythic View — Changelog
 
+## 1.2.0 — Integrated Combat Mode (2026-10-10)
+
+- Added Combat Mode's mouse look, crosshair, reticle targeting, click casting, interaction HUD, and ally cycling inside Mythic View.
+- Added a Combat controls settings entry, `/mv combat`, and the original Combat Mode key bindings.
+- Moved Combat Mode settings under `MythicViewDB.combatMode`; use `scripts/migrate_combatmode_sv.py` after closing WoW to preserve settings from the standalone addon.
+- Mythic View remains the sole owner of camera framing CVars. Combat Mode camera controls now direct users to Mythic View settings.
+- Preserved source attribution for Combat Mode 4.8.2, commit `10bd846d1aec4b00b2f6f85df54414eb361e7902`.
+
 ## 1.1.0 — Three new camera styles (2026-10-08)
 
 - Added **The Last of Us Part II** (low and tight over the shoulder, narrow view, slow tense movement, aim while casting), **Ghost of Tsushima** (mid-distance, nearly centered, long silky transitions) and **Sekiro: Shadows Die Twice** (closer and faster than Elden Ring, strong enemy focus, sharp impacts).

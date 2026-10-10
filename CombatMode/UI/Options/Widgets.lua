@@ -1,0 +1,3242 @@
+---------------------------------------------------------------------------------------
+--  UI/Options/Widgets.lua — OPTIONS — control factories
+---------------------------------------------------------------------------------------
+--  What it does: Factories for toggles, sliders, dropdowns, keybind capture, text inputs,
+--  headers, gaps, Confirm/Notify/ShowCopyLink dialogs, ShowWelcome, and SyncControls registration.
+--  Tabs supply get/set closures; widgets stay feature-API agnostic.
+--  Architecture / how it works:
+--    • UI.Options.controls registry; Options.Sync() refreshes values + disabled state.
+--    • Sliders: opts.default; right-click resets to that value. Minus/plus icons
+--      step by opts.step (dim until hover) and stop at min/max.
+--    • Dropdown menus match the select's laid-out width.
+--    • Layout helpers (NewLayout) used by tabs and nested hosts (e.g. Camera/DynamicCam).
+--    • charSpecific badge + tooltips for per-character settings.
+--    • newFeatureFlag — shared "NEW" atlas badge (Alliance) beside section/option titles;
+--      sidebar tabs use the Horde atlas via OptionsPanel.
+--  Does not: Call CM feature apply functions except via tab-provided set() callbacks.
+--  Related: UI/Options/Draw.lua, UI/Options/ColorPickerDialog.lua,
+--  UI/Options/SpellMultiSelect.lua, UI/Options/OptionsPanel.lua,
+--  UI/Options/Tabs/TabGeneral.lua, UI/Options/Tabs/TabCrosshair.lua,
+--  UI/Options/Tabs/TabClickCasting.lua
+--  MakeButton `layout = "row"` — title left, action pill right (e.g. Reaction Colors).
+---------------------------------------------------------------------------------------
+local _, addonNS = ...
+local CM = addonNS.CombatMode
+local _G = _G
+
+-- WoW API
+local CreateFrame = _G.CreateFrame
+local C_Texture = _G.C_Texture
+local C_Timer = _G.C_Timer
+local GetCurrentKeyBoardFocus = _G.GetCurrentKeyBoardFocus
+local IsMouseButtonDown = _G.IsMouseButtonDown
+local UIParent = _G.UIParent
+
+-- Lua stdlib
+local ipairs = _G.ipairs
+local pairs = _G.pairs
+local tinsert = _G.table.insert
+local tsort = _G.table.sort
+local abs = _G.math.abs
+local floor = _G.math.floor
+local max = _G.math.max
+local min = _G.math.min
+local strfind = _G.string.find
+local strlower = _G.string.lower
+local strtrim = _G.string.trim
+local tconcat = _G.table.concat
+local tremove = _G.table.remove
+local tostring = _G.tostring
+local type = _G.type
+
+local UI = CM.UI
+local C = UI.Colors
+local DISABLED_A = C.disabledAlpha or 0.5
+UI.Options = UI.Options or {}
+local Options = UI.Options
+Options.controls = Options.controls or {}
+
+local ROW_H = 30
+
+---------------------------------------------------------------------------------------
+--                                 SHARED HELPERS                                    --
+---------------------------------------------------------------------------------------
+--- Refreshes every registered control (values + enabled state). Cheap; called on
+--- panel open and after any set() that could change another control's disabled state.
+function Options.Sync()
+  for _, control in ipairs(Options.controls) do
+    if control.Refresh then
+      control.Refresh()
+    end
+    if control.UpdateCharScopeTag then
+      control.UpdateCharScopeTag()
+    end
+  end
+end
+
+local function Register(control)
+  if control.UpdateCharScopeTag then
+    local prevRefresh = control.Refresh
+    function control.Refresh()
+      if prevRefresh then
+        prevRefresh()
+      end
+      control.UpdateCharScopeTag()
+    end
+  end
+  tinsert(Options.controls, control)
+  return control
+end
+
+local function IsDisabled(opts)
+  return type(opts.disabled) == "function" and opts.disabled() or opts.disabled == true
+end
+
+--- Shared by SpellMultiSelect.lua (loaded after this file).
+Options.RegisterControl = Register
+Options.IsDisabled = IsDisabled
+
+--- Full-row hover highlight (mirrors the left sidebar tab hover): a subtle rounded
+--- background band shown while the cursor is anywhere over the row or its interactive
+--- control(s). Extra args are inner mouse-enabled controls (button/slider/editbox); omit
+--- when the row itself is the hit target. Disabled options never show the highlight.
+--- MouseIsOver guards prevent flicker when moving between row and child. The highlight
+--- is painted as BACKGROUND textures on the row so it never covers the label or control.
+local function AddRowHover(row, opts, ...)
+  local bounds = CreateFrame("Frame", nil, row)
+  -- Keep the wash inside the scroll child. Extending left of the row causes the
+  -- ScrollFrame clipping boundary to cut off the left corner masks.
+  bounds:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 2)
+  bounds:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, -2)
+  bounds:EnableMouse(false)
+
+  local hl = UI.CreateRoundedHover(row, bounds, C.tabHover, UI.Radius.control)
+
+  local hots = { ... }
+
+  local function show()
+    if opts and IsDisabled(opts) then
+      hl.Hide()
+      return
+    end
+    hl.Show()
+  end
+  local function hide()
+    if row:IsMouseOver() then
+      return
+    end
+    for i = 1, #hots do
+      local hot = hots[i]
+      if hot and hot:IsMouseOver() then
+        return
+      end
+    end
+    hl.Hide()
+  end
+
+  -- Refresh() calls this when a control flips to disabled while the cursor is still over it.
+  row.cmClearHover = function()
+    hl.Hide()
+  end
+
+  row:EnableMouse(true)
+  row:HookScript("OnEnter", show)
+  row:HookScript("OnLeave", hide)
+  for i = 1, #hots do
+    local hot = hots[i]
+    if hot and hot ~= row then
+      hot:HookScript("OnEnter", show)
+      hot:HookScript("OnLeave", hide)
+    end
+  end
+end
+
+---------------------------------------------------------------------------------------
+--                                 CONFIRM DIALOG                                     --
+---------------------------------------------------------------------------------------
+local CONFIRM_W = 400
+local CONFIRM_PAD = 18
+local CONFIRM_TITLE_W = 95
+local CONFIRM_TITLE_H = 22
+local CONFIRM_BTN_W = 116
+local CONFIRM_BTN_H = 24
+local confirmDialog
+local welcomeDialog
+
+--- Wordmark row, horizontally centered under the dialog top edge (no logo).
+local function AttachBrandedHeader(dialog)
+  local header = CreateFrame("Frame", nil, dialog)
+  header:SetSize(CONFIRM_TITLE_W, CONFIRM_TITLE_H)
+  header:SetPoint("TOP", dialog, "TOP", 0, -CONFIRM_PAD)
+
+  local titleArt = header:CreateTexture(nil, "ARTWORK")
+  titleArt:SetTexture(CM.Constants.Title)
+  titleArt:SetAllPoints(header)
+
+  return header
+end
+
+--- Neutral pill button matching UI.MakeButton, minus the layout row wrapper.
+local function CreateDialogButton(parent, label)
+  local button = CreateFrame("Button", nil, parent)
+  button:SetSize(CONFIRM_BTN_W, CONFIRM_BTN_H)
+  local idle = { 0.16, 0.16, 0.16, 1 }
+  local hover = { 0.26, 0.26, 0.26, 1 }
+  UI.StylePill(button, idle, { 0, 0, 0, 0 })
+
+  local text = UI.CreateFontString(button, "OVERLAY", UI.Fonts.base, "GameFontNormal")
+  text:SetPoint("CENTER")
+  text:SetText(UI.StripColors(label) or "")
+  text:SetTextColor(C.text[1], C.text[2], C.text[3])
+
+  button:SetScript("OnEnter", function(self)
+    self:cmSetFill(hover[1], hover[2], hover[3], 1)
+    text:SetTextColor(1, 1, 1)
+  end)
+  button:SetScript("OnLeave", function(self)
+    self:cmSetFill(idle[1], idle[2], idle[3], 1)
+    text:SetTextColor(C.text[1], C.text[2], C.text[3])
+  end)
+  button.text = text
+  return button
+end
+
+--- Builds the single reusable confirm window. The full-screen blocker underneath makes
+--- the dialog modal without dismissing it on an outside click, so the choice stays
+--- explicit; ESC and the No button cancel.
+local function BuildConfirmDialog()
+  local blocker = CreateFrame("Button", nil, UIParent)
+  blocker:SetAllPoints(UIParent)
+  blocker:SetFrameStrata("FULLSCREEN_DIALOG")
+  blocker:EnableMouse(true)
+  blocker:Hide()
+
+  local dim = blocker:CreateTexture(nil, "BACKGROUND")
+  dim:SetAllPoints(blocker)
+  dim:SetColorTexture(0, 0, 0, 0.55)
+
+  local dialog = CreateFrame("Frame", "CombatModeConfirmDialog", UIParent)
+  dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+  dialog:SetFrameLevel(blocker:GetFrameLevel() + 10)
+  dialog:SetToplevel(true)
+  dialog:SetSize(CONFIRM_W, 120)
+  UI.StyleRounded(dialog, C.windowBg, C.windowBorder, UI.Radius.window)
+  dialog:Hide()
+
+  -- Branded header mirroring the main options window title bar (logo + wordmark art).
+  local header = AttachBrandedHeader(dialog)
+
+  local message = UI.CreateFontString(dialog, "OVERLAY", UI.Fonts.base, "GameFontHighlight")
+  message:SetPoint("TOP", header, "BOTTOM", 0, -12)
+  message:SetWidth(CONFIRM_W - (2 * CONFIRM_PAD))
+  message:SetJustifyH("CENTER")
+  message:SetJustifyV("TOP")
+  message:SetWordWrap(true)
+  message:SetTextColor(C.text[1], C.text[2], C.text[3])
+
+  local accept = CreateDialogButton(dialog, _G.YES or "Yes")
+  local cancel = CreateDialogButton(dialog, _G.NO or "No")
+  cancel:SetPoint("BOTTOMLEFT", dialog, "BOTTOM", 5, CONFIRM_PAD)
+
+  accept:SetScript("OnClick", function()
+    local handler = dialog.onAccept
+    dialog:Hide()
+    if handler then
+      handler()
+    end
+  end)
+  cancel:SetScript("OnClick", function()
+    dialog:Hide()
+  end)
+
+  -- Covers every close path (No, Okay, ESC via UISpecialFrames): the blocker never
+  -- lingers and onClose fires exactly once regardless of how the dialog was dismissed.
+  dialog:SetScript("OnHide", function(self)
+    blocker:Hide()
+    local onClose = self.onClose
+    self.onAccept = nil
+    self.onClose = nil
+    if onClose then
+      onClose()
+    end
+  end)
+
+  UI.EnableEscClose(dialog, "CombatModeConfirmDialog")
+
+  dialog.blocker = blocker
+  dialog.message = message
+  dialog.accept = accept
+  dialog.cancel = cancel
+  return dialog
+end
+
+--- Lays out, positions and shows the shared modal. `single` collapses the button row to
+--- one centered Okay (UI.Notify); otherwise Yes/No are paired (UI.Confirm).
+local function ShowDialog(text, single, onAccept, onClose)
+  confirmDialog = confirmDialog or BuildConfirmDialog()
+  local dialog = confirmDialog
+
+  dialog.message:SetText(UI.StripColors(text) or "")
+  dialog.onAccept = onAccept
+  dialog.onClose = onClose
+
+  dialog.accept:ClearAllPoints()
+  if single then
+    dialog.cancel:Hide()
+    dialog.accept.text:SetText(_G.OKAY or "Okay")
+    dialog.accept:SetPoint("BOTTOM", dialog, "BOTTOM", 0, CONFIRM_PAD)
+  else
+    dialog.cancel:Show()
+    dialog.accept.text:SetText(_G.YES or "Yes")
+    dialog.accept:SetPoint("BOTTOMRIGHT", dialog, "BOTTOM", -5, CONFIRM_PAD)
+  end
+
+  dialog:SetHeight(
+    CONFIRM_PAD
+      + CONFIRM_TITLE_H
+      + 12
+      + dialog.message:GetStringHeight()
+      + 16
+      + CONFIRM_BTN_H
+      + CONFIRM_PAD
+  )
+
+  -- Centered on the options window when it is open so the choice reads in context.
+  local anchor = CM.GetOptionsFrame and CM.GetOptionsFrame()
+  dialog:ClearAllPoints()
+  if anchor and anchor:IsShown() then
+    dialog:SetPoint("CENTER", anchor, "CENTER", 0, 0)
+  else
+    dialog:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+  end
+
+  dialog.blocker:Show()
+  dialog:Show()
+  dialog:Raise()
+end
+
+--- Themed replacement for Blizzard's StaticPopup confirm: a branded modal window whose
+--- body text is stripped of color markup like every other option string.
+function UI.Confirm(text, onAccept)
+  ShowDialog(text, false, onAccept, nil)
+end
+
+--- Single-button informational modal (generic Notify). Prefer UI.ShowWelcome for the
+--- first-install greeting — that uses a dedicated frame deferred past load-end UI reset.
+function UI.Notify(text, onClose)
+  ShowDialog(text, true, nil, onClose)
+end
+
+---------------------------------------------------------------------------------------
+--                              COPY LINK POPUP                                       --
+---------------------------------------------------------------------------------------
+-- LaunchURL / CopyToClipboard are protected from addons. Show an EditBox with the URL
+-- highlighted so the player can Ctrl+C, then paste in a browser.
+local COPY_LINK_W = 360
+local COPY_LINK_INPUT_H = 28
+local copyLinkDialog
+
+local function BuildCopyLinkDialog()
+  local blocker = CreateFrame("Button", nil, UIParent)
+  blocker:SetAllPoints(UIParent)
+  blocker:SetFrameStrata("FULLSCREEN_DIALOG")
+  blocker:SetFrameLevel(9000)
+  blocker:EnableMouse(true)
+  blocker:Hide()
+
+  local dim = blocker:CreateTexture(nil, "BACKGROUND")
+  dim:SetAllPoints(blocker)
+  dim:SetColorTexture(0, 0, 0, 0.55)
+
+  local dialog = CreateFrame("Frame", "CombatModeCopyLinkDialog", UIParent)
+  dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+  dialog:SetFrameLevel(blocker:GetFrameLevel() + 10)
+  dialog:SetToplevel(true)
+  dialog:SetSize(COPY_LINK_W, 160)
+  UI.StyleRounded(dialog, C.windowBg, C.windowBorder, UI.Radius.window)
+  dialog:EnableMouse(true)
+  dialog:Hide()
+
+  local header = AttachBrandedHeader(dialog)
+
+  local message = UI.CreateFontString(dialog, "OVERLAY", UI.Fonts.base, "GameFontHighlight")
+  message:SetPoint("TOP", header, "BOTTOM", 0, -12)
+  message:SetWidth(COPY_LINK_W - (2 * CONFIRM_PAD))
+  message:SetJustifyH("CENTER")
+  message:SetJustifyV("TOP")
+  message:SetWordWrap(true)
+  message:SetTextColor(C.text[1], C.text[2], C.text[3])
+
+  local box = CreateFrame("Frame", nil, dialog)
+  box:SetHeight(COPY_LINK_INPUT_H)
+  box:SetPoint("TOPLEFT", message, "BOTTOMLEFT", 0, -12)
+  box:SetPoint("TOPRIGHT", message, "BOTTOMRIGHT", 0, -12)
+  UI.StyleRounded(box, C.inputBg, C.cardBorder, UI.Radius.control)
+
+  local edit = CreateFrame("EditBox", nil, box)
+  edit:SetAutoFocus(false)
+  edit:EnableMouse(true)
+  UI.SetEditBoxFont(edit)
+  edit:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
+  edit:SetPoint("TOPLEFT", box, "TOPLEFT", 8, -4)
+  edit:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -8, 4)
+  edit:SetScript("OnEscapePressed", function()
+    dialog:Hide()
+  end)
+  edit:SetScript("OnEnterPressed", function(self)
+    self:HighlightText()
+  end)
+  -- Keep the URL intact if the player types over it; selection is for Ctrl+C only.
+  edit:SetScript("OnTextChanged", function(self, userInput)
+    if not userInput then
+      return
+    end
+    local locked = self.cmUrl
+    if locked and self:GetText() ~= locked then
+      self:SetText(locked)
+      self:HighlightText()
+    end
+  end)
+  box:EnableMouse(true)
+  box:SetScript("OnMouseDown", function()
+    edit:SetFocus()
+    edit:HighlightText()
+  end)
+
+  local okay = CreateDialogButton(dialog, _G.OKAY or "Okay")
+  okay:SetPoint("BOTTOM", dialog, "BOTTOM", 0, CONFIRM_PAD)
+  okay:SetScript("OnClick", function()
+    dialog:Hide()
+  end)
+
+  dialog:SetScript("OnHide", function()
+    blocker:Hide()
+    edit:ClearFocus()
+    edit.cmUrl = nil
+  end)
+  dialog:SetScript("OnShow", function()
+    edit:SetFocus()
+    edit:HighlightText()
+  end)
+
+  UI.EnableEscClose(dialog, "CombatModeCopyLinkDialog")
+
+  dialog.blocker = blocker
+  dialog.message = message
+  dialog.edit = edit
+  return dialog
+end
+
+--- Modal with a read-locked EditBox containing `url`. Player Ctrl+C then pastes outside WoW.
+function UI.ShowCopyLink(url, label)
+  if type(url) ~= "string" or url == "" then
+    return
+  end
+
+  copyLinkDialog = copyLinkDialog or BuildCopyLinkDialog()
+  local dialog = copyLinkDialog
+  local name = (type(label) == "string" and label ~= "") and label or "Link"
+
+  dialog.message:SetText("Copy the " .. name .. " link (Ctrl+C), then paste it in your browser.")
+  dialog.edit.cmUrl = url
+  dialog.edit:SetText(url)
+
+  dialog:SetHeight(
+    CONFIRM_PAD
+      + CONFIRM_TITLE_H
+      + 12
+      + dialog.message:GetStringHeight()
+      + 12
+      + COPY_LINK_INPUT_H
+      + 16
+      + CONFIRM_BTN_H
+      + CONFIRM_PAD
+  )
+
+  local anchor = CM.GetOptionsFrame and CM.GetOptionsFrame()
+  dialog:ClearAllPoints()
+  if anchor and anchor:IsShown() then
+    dialog:SetPoint("CENTER", anchor, "CENTER", 0, 0)
+  else
+    dialog:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+  end
+
+  dialog.blocker:Show()
+  dialog:Show()
+  dialog:Raise()
+  dialog.edit:SetFocus()
+  dialog.edit:HighlightText()
+end
+
+---------------------------------------------------------------------------------------
+--                                 WELCOME MODAL                                      --
+---------------------------------------------------------------------------------------
+-- Dedicated first-install window (not the shared Confirm/Notify dialog). Kept out of
+-- UISpecialFrames so Blizzard's load-end CloseSpecialWindows cannot dismiss it before
+-- the player sees it; ESC is handled locally instead.
+local WELCOME_W = 440
+
+local function BuildWelcomeDialog()
+  local blocker = CreateFrame("Button", nil, UIParent)
+  blocker:SetAllPoints(UIParent)
+  blocker:SetFrameStrata("FULLSCREEN_DIALOG")
+  blocker:SetFrameLevel(9000)
+  blocker:EnableMouse(true)
+  blocker:Hide()
+
+  local dim = blocker:CreateTexture(nil, "BACKGROUND")
+  dim:SetAllPoints(blocker)
+  dim:SetColorTexture(0, 0, 0, 0.55)
+
+  local dialog = CreateFrame("Frame", "CombatModeWelcomeDialog", UIParent)
+  dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+  dialog:SetFrameLevel(blocker:GetFrameLevel() + 10)
+  dialog:SetToplevel(true)
+  dialog:SetSize(WELCOME_W, 120)
+  UI.StyleRounded(dialog, C.windowBg, C.windowBorder, UI.Radius.window)
+  dialog:EnableMouse(true)
+  dialog:Hide()
+
+  local header = AttachBrandedHeader(dialog)
+
+  local message = UI.CreateFontString(dialog, "OVERLAY", UI.Fonts.base, "GameFontHighlight")
+  message:SetPoint("TOP", header, "BOTTOM", 0, -12)
+  message:SetWidth(WELCOME_W - (2 * CONFIRM_PAD))
+  message:SetJustifyH("CENTER")
+  message:SetJustifyV("TOP")
+  message:SetWordWrap(true)
+  message:SetTextColor(C.text[1], C.text[2], C.text[3])
+
+  local okay = CreateDialogButton(dialog, _G.OKAY or "Okay")
+  okay:SetPoint("BOTTOM", dialog, "BOTTOM", 0, CONFIRM_PAD)
+  okay:SetScript("OnClick", function()
+    dialog:Hide()
+  end)
+
+  dialog:SetScript("OnHide", function(self)
+    blocker:Hide()
+    local onClose = self.onClose
+    self.onClose = nil
+    if onClose then
+      onClose()
+    end
+  end)
+
+  -- ESC closes without UISpecialFrames (avoids load-end CloseSpecialWindows race).
+  dialog:SetScript("OnShow", function(self)
+    self:EnableKeyboard(true)
+    if self.SetPropagateKeyboardInput then
+      self:SetPropagateKeyboardInput(false)
+    end
+  end)
+  dialog:SetScript("OnKeyDown", function(self, key)
+    if key == "ESCAPE" then
+      self:Hide()
+    end
+  end)
+
+  dialog.blocker = blocker
+  dialog.message = message
+  return dialog
+end
+
+--- First-install welcome modal. Call after the loading screen settles (Runtime defers).
+--- Keeps inline |cff| color markup so slash-command hints can stay blue/red.
+function UI.ShowWelcome(text, onClose)
+  welcomeDialog = welcomeDialog or BuildWelcomeDialog()
+  local dialog = welcomeDialog
+
+  dialog.message:SetText(text or "")
+  dialog.onClose = onClose
+
+  local msgH = dialog.message:GetStringHeight() or 40
+  if msgH < 1 then
+    msgH = 60
+  end
+  dialog:SetHeight(CONFIRM_PAD + CONFIRM_TITLE_H + 12 + msgH + 16 + CONFIRM_BTN_H + CONFIRM_PAD)
+
+  dialog:ClearAllPoints()
+  dialog:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+
+  dialog.blocker:Show()
+  dialog.blocker:Raise()
+  dialog:Show()
+  dialog:Raise()
+end
+
+--- Split-menu-style option row: left ~60% holds the title + helper text stacked
+--- tightly; right ~40% holds the interactive control. The text block and the control
+--- are vertically centered against each other within the row. `opts.labelInset` is
+--- accepted for back-compat but ignored.
+local TEXT_FRAC = 0.58
+local ROW_PAD_X = 10
+local ROW_PAD_Y = 4
+local TEXT_GAP = 1
+local DESC_BELOW_GAP = 6
+local CONTROL_GAP = 20
+local ICON_GAP = 6
+local DEFAULT_ICON_SIZE = 20
+local CHAR_SCOPE_MARK = "©"
+local CHAR_SCOPE_MARK_SIZE = 11
+local CHAR_SCOPE_MARK_W = 12
+local CHAR_SCOPE_MARK_GAP = 3
+-- Same blue as slash-command hints (|cff69ccf0).
+local CHAR_SCOPE_MARK_COLOR = { 0.412, 0.800, 0.941 }
+local CHAR_SCOPE_TOOLTIP = "Character-specific option."
+
+-- Character-create "NEW" badge (Interface/Glues/CharacterCreate/NewCharacterNotification).
+-- Tabs use Horde; in-content headers/options use Alliance.
+UI.NewFeatureBadge = {
+  tabAtlas = "NewCharacter-Horde",
+  contentAtlas = "NewCharacter-Alliance",
+  tabMaxH = 28,
+  contentMaxH = 22,
+  headerMaxH = 28,
+  gap = -4,
+  headerGap = -4,
+}
+
+--- Sized NEW atlas texture. Caller places it (PlaceNewFeatureBadge / tab far-right).
+function UI.CreateNewFeatureBadge(parent, atlas, maxH)
+  atlas = atlas or UI.NewFeatureBadge.contentAtlas
+  maxH = maxH or UI.NewFeatureBadge.contentMaxH
+  local badge = parent:CreateTexture(nil, "OVERLAY")
+  badge:SetAtlas(atlas, true)
+  local h = badge:GetHeight() or maxH
+  local w = badge:GetWidth() or maxH
+  if h > maxH and h > 0 then
+    local scale = maxH / h
+    badge:SetSize(w * scale, maxH)
+  end
+  return badge
+end
+
+--- Sit immediately after title glyphs (same idea as the © char-scope mark).
+--- When `afterRegion` is shown (e.g. the © hit frame), place after that instead.
+--- Optional `gapOverride` (e.g. headerGap) tightens spacing for section titles.
+function UI.PlaceNewFeatureBadge(badge, label, labelW, afterRegion, gapOverride)
+  if not badge or not label then
+    return
+  end
+  badge:ClearAllPoints()
+  local gap = gapOverride
+  if gap == nil then
+    gap = UI.NewFeatureBadge.gap or 6
+  end
+  if afterRegion and afterRegion.IsShown and afterRegion:IsShown() then
+    badge:SetPoint("LEFT", afterRegion, "RIGHT", gap, 0)
+    return
+  end
+  local titleW = label:GetStringWidth() or 0
+  if labelW and titleW > labelW then
+    titleW = labelW
+  end
+  badge:SetPoint("LEFT", label, "LEFT", titleW + gap, 0)
+end
+
+--- Place the © immediately after the title glyphs (not at the right edge of the
+--- label's wrap box), vertically centered on the title line.
+local function PlaceCharScopeMark(scopeTag, label, labelW)
+  local titleW = label:GetStringWidth() or 0
+  if titleW > labelW then
+    titleW = labelW
+  end
+  local markX = titleW + CHAR_SCOPE_MARK_GAP
+  local maxX = max(labelW - CHAR_SCOPE_MARK_W, 0)
+  if markX > maxX then
+    markX = maxX
+  end
+  scopeTag:ClearAllPoints()
+  -- LEFT/LEFT centers the mark on the title FontString's height (the title line).
+  scopeTag:SetPoint("LEFT", label, "LEFT", markX, 0)
+end
+
+local function AddRowLabel(row, text, allowColors)
+  local label = UI.CreateFontString(row, "OVERLAY", UI.Fonts.base, "GameFontHighlight")
+  label:SetPoint("TOPLEFT", row, "TOPLEFT", ROW_PAD_X, -ROW_PAD_Y)
+  label:SetJustifyH("LEFT")
+  label:SetJustifyV("TOP")
+  label:SetWordWrap(true)
+  local display = allowColors and text or UI.StripColors(text)
+  label:SetText(display or "")
+  label:SetTextColor(C.text[1], C.text[2], C.text[3])
+  row.label = label
+  return label
+end
+
+local function CharSpecificEnabled(opts)
+  local v = opts and opts.charSpecific
+  if type(v) == "function" then
+    return v() and true or false
+  end
+  return v and true or false
+end
+
+--- Attaches opts.desc and installs SetWidthTo. Default layout is the split-menu-style
+--- 60/40 split (title+helper left, control right, vertically centered). When
+--- `opts.descBelow` is set, the title shares a top band with the control and the helper
+--- spans the full row width underneath (used by the narrow sidebar footer).
+--- `opts.iconAtlas` / `opts.iconSize` place a texture left of the title.
+--- Optional `opts.iconWidth` / `opts.iconHeight` keep non-square atlases (e.g. 52x69
+--- mouse icons). Optional `opts.leadingIconTexture` (BLP path) sits to the left of
+--- `iconAtlas` (Click Casting Ctrl/Shift/Alt + mouse). When `opts.iconFitText` is set,
+--- icons grow to the title+helper block height (width scales with aspect) and are
+--- vertically centered against that whole column.
+--- `opts.charSpecific` places a blue © to the right of the title (bool or function).
+--- `opts.newFeatureFlag` places the Alliance "NEW" badge to the right of the title.
+--- `control.widgetH` / `control.widgetFill` / `control.textFrac` behave as elsewhere
+--- (multiline inputs use textFrac 0.40 so the box gets ~60%).
+local function AttachOptionText(control, row, opts, widgetH)
+  control.widgetH = widgetH or ROW_H
+  control.descBelow = opts.descBelow and true or nil
+  control.iconFitText = opts.iconFitText and true or nil
+  control.charSpecificOpt = opts.charSpecific
+
+  if opts.leadingIconTexture then
+    local leadHeight = opts.leadingIconHeight
+      or opts.iconHeight
+      or opts.iconSize
+      or DEFAULT_ICON_SIZE
+    local leadWidth = opts.leadingIconWidth or leadHeight
+    local lead = row:CreateTexture(nil, "ARTWORK")
+    lead:SetTexture(opts.leadingIconTexture)
+    lead:SetSize(leadWidth, leadHeight)
+    control.leadingIcon = lead
+    control.leadingIconWidth = leadWidth
+    control.leadingIconHeight = leadHeight
+    control.leadingIconAspect = leadHeight > 0 and (leadWidth / leadHeight) or 1
+  end
+
+  if opts.iconAtlas then
+    local iconHeight = opts.iconHeight or opts.iconSize or DEFAULT_ICON_SIZE
+    local iconWidth = opts.iconWidth or opts.iconSize or iconHeight
+    local icon = row:CreateTexture(nil, "ARTWORK")
+    icon:SetAtlas(opts.iconAtlas)
+    icon:SetSize(iconWidth, iconHeight)
+    control.icon = icon
+    control.iconWidth = iconWidth
+    control.iconHeight = iconHeight
+    control.iconAspect = iconHeight > 0 and (iconWidth / iconHeight) or 1
+    -- Legacy square size used as the minimum fit-text height floor.
+    control.iconSize = iconHeight
+  end
+
+  if opts.charSpecific ~= nil then
+    -- Hit frame so the © can receive mouse for the tooltip (FontStrings cannot).
+    local hit = CreateFrame("Frame", nil, row)
+    hit:SetSize(CHAR_SCOPE_MARK_W, CHAR_SCOPE_MARK_W)
+    hit:EnableMouse(true)
+    local mark = UI.CreateFontString(hit, "OVERLAY", CHAR_SCOPE_MARK_SIZE, "GameFontHighlight")
+    mark:SetPoint("CENTER")
+    mark:SetText(CHAR_SCOPE_MARK)
+    mark:SetTextColor(CHAR_SCOPE_MARK_COLOR[1], CHAR_SCOPE_MARK_COLOR[2], CHAR_SCOPE_MARK_COLOR[3])
+    hit.mark = mark
+    control.scopeTag = hit
+    UI.AttachTooltip(hit, CHAR_SCOPE_TOOLTIP)
+    if not CharSpecificEnabled(opts) then
+      hit:Hide()
+    end
+  end
+
+  if opts.newFeatureFlag then
+    control.newFeatureBadge =
+      UI.CreateNewFeatureBadge(row, UI.NewFeatureBadge.contentAtlas, UI.NewFeatureBadge.contentMaxH)
+  end
+
+  local raw = opts.desc
+  if type(raw) == "function" then
+    raw = raw()
+  end
+  local allowColors = opts.descAllowColors and true or false
+  local display = allowColors and raw or (raw and UI.StripColors(raw))
+  if display and display ~= "" then
+    local desc = UI.CreateFontString(row, "OVERLAY", UI.Fonts.desc, "GameFontHighlightSmall")
+    desc:SetJustifyH("LEFT")
+    desc:SetJustifyV("TOP")
+    desc:SetWordWrap(true)
+    desc:SetText(display)
+    desc:SetTextColor(C.textDim[1], C.textDim[2], C.textDim[3])
+    control.desc = desc
+  end
+
+  function control.UpdateCharScopeTag()
+    local tag = control.scopeTag
+    if not tag then
+      return
+    end
+    local show = CharSpecificEnabled(opts)
+    local wasShown = tag:IsShown() and true or false
+    if show then
+      tag:Show()
+    else
+      tag:Hide()
+    end
+    -- Click Casting slots flip char/account with Account-Wide Binds; relayout when the
+    -- mark appears or disappears so title width stays correct after Options.Sync().
+    if (show and true or false) ~= wasShown and not control._layouting and control._layoutWidth then
+      control.SetWidthTo(control._layoutWidth)
+    end
+  end
+
+  local prevSetWidthTo = control.SetWidthTo
+  function control.SetWidthTo(width)
+    if prevSetWidthTo then
+      prevSetWidthTo(width)
+    end
+
+    control._layouting = true
+    control._layoutWidth = width
+
+    local showScope = CharSpecificEnabled(opts)
+    if control.scopeTag then
+      if showScope then
+        control.scopeTag:Show()
+      else
+        control.scopeTag:Hide()
+      end
+    end
+
+    local widget = control.widget
+    local icon = control.icon
+    local leadingIcon = control.leadingIcon
+    local iconHeight = icon and (control.iconHeight or control.iconSize or DEFAULT_ICON_SIZE) or 0
+    local iconWidth = icon and (control.iconWidth or control.iconSize or iconHeight) or 0
+    local iconAspect = (control.iconAspect and control.iconAspect > 0) and control.iconAspect or 1
+    local leadHeight = leadingIcon and (control.leadingIconHeight or DEFAULT_ICON_SIZE) or 0
+    local leadWidth = leadingIcon and (control.leadingIconWidth or leadHeight) or 0
+    local leadAspect = (control.leadingIconAspect and control.leadingIconAspect > 0)
+        and control.leadingIconAspect
+      or 1
+    local function IconsLead()
+      local lead = 0
+      if leadingIcon then
+        lead = lead + leadWidth + ICON_GAP
+      end
+      if icon then
+        lead = lead + iconWidth + ICON_GAP
+      end
+      return lead
+    end
+    local iconLead = IconsLead()
+    local iconsHeight = max(iconHeight, leadHeight)
+    local scopeTag = control.scopeTag
+    local scopeShown = scopeTag and scopeTag:IsShown()
+    local h
+
+    local function PlaceIconColumn(topY, textBlockH)
+      local x = ROW_PAD_X
+      if leadingIcon then
+        local leadTop = topY + floor(((textBlockH or leadHeight) - leadHeight) / 2)
+        leadingIcon:ClearAllPoints()
+        leadingIcon:SetPoint("TOPLEFT", row, "TOPLEFT", x, -leadTop)
+        x = x + leadWidth + ICON_GAP
+      end
+      if icon then
+        local mouseTop = topY + floor(((textBlockH or iconHeight) - iconHeight) / 2)
+        icon:ClearAllPoints()
+        icon:SetPoint("TOPLEFT", row, "TOPLEFT", x, -mouseTop)
+      end
+    end
+
+    if control.descBelow then
+      -- Top band: title left + control right; helper full-width below.
+      local labelW = max(width - (2 * ROW_PAD_X) - iconLead - CONTROL_GAP - 40, 40)
+      row.label:SetWidth(labelW)
+      local labelH = row.label:GetStringHeight()
+      local bandH = max(labelH, control.widgetH, iconsHeight)
+      local labelTop = ROW_PAD_Y + floor((bandH - labelH) / 2)
+      local widgetTop = ROW_PAD_Y + floor((bandH - control.widgetH) / 2)
+
+      PlaceIconColumn(ROW_PAD_Y + floor((bandH - iconsHeight) / 2), iconsHeight)
+      row.label:ClearAllPoints()
+      row.label:SetPoint("TOPLEFT", row, "TOPLEFT", ROW_PAD_X + iconLead, -labelTop)
+      if control.newFeatureBadge then
+        UI.PlaceNewFeatureBadge(control.newFeatureBadge, row.label, labelW)
+      end
+      if scopeShown then
+        if control.newFeatureBadge then
+          scopeTag:ClearAllPoints()
+          scopeTag:SetPoint("LEFT", control.newFeatureBadge, "RIGHT", CHAR_SCOPE_MARK_GAP, 0)
+        else
+          PlaceCharScopeMark(scopeTag, row.label, labelW)
+        end
+      end
+      if widget then
+        widget:ClearAllPoints()
+        widget:SetPoint("TOPRIGHT", row, "TOPRIGHT", -ROW_PAD_X, -widgetTop)
+      end
+
+      h = ROW_PAD_Y + bandH
+      if control.desc then
+        control.desc:ClearAllPoints()
+        control.desc:SetWidth(width - (2 * ROW_PAD_X))
+        control.desc:SetPoint("TOPLEFT", row, "TOPLEFT", ROW_PAD_X, -(h + DESC_BELOW_GAP))
+        h = h + DESC_BELOW_GAP + control.desc:GetStringHeight()
+      end
+      h = h + ROW_PAD_Y
+    else
+      local textFrac = control.textFrac or TEXT_FRAC
+
+      local function MeasureText(lead)
+        local textW = max(floor(width * textFrac) - ROW_PAD_X - lead, 40)
+        row.label:SetWidth(textW)
+        local labelH = row.label:GetStringHeight()
+        local textH = labelH
+        if control.desc then
+          control.desc:SetWidth(textW)
+          textH = labelH + TEXT_GAP + control.desc:GetStringHeight()
+        end
+        return textW, labelH, textH
+      end
+
+      local textW, _, textH = MeasureText(iconLead)
+
+      -- Grow icons to the title+helper block so they read flush with both lines.
+      if (icon or leadingIcon) and control.iconFitText then
+        local fitH = floor(textH + 0.5)
+        if icon then
+          iconHeight = max(control.iconHeight or control.iconSize or DEFAULT_ICON_SIZE, fitH)
+          iconWidth = max(1, floor(iconHeight * iconAspect + 0.5))
+          icon:SetSize(iconWidth, iconHeight)
+        end
+        if leadingIcon then
+          leadHeight = max(control.leadingIconHeight or DEFAULT_ICON_SIZE, fitH)
+          leadWidth = max(1, floor(leadHeight * leadAspect + 0.5))
+          leadingIcon:SetSize(leadWidth, leadHeight)
+        end
+        iconsHeight = max(iconHeight, leadHeight)
+        iconLead = IconsLead()
+        textW, _, textH = MeasureText(iconLead)
+        fitH = floor(textH + 0.5)
+        if icon then
+          iconHeight = max(iconHeight, fitH)
+          iconWidth = max(1, floor(iconHeight * iconAspect + 0.5))
+          icon:SetSize(iconWidth, iconHeight)
+        end
+        if leadingIcon then
+          leadHeight = max(leadHeight, fitH)
+          leadWidth = max(1, floor(leadHeight * leadAspect + 0.5))
+          leadingIcon:SetSize(leadWidth, leadHeight)
+        end
+        iconsHeight = max(iconHeight, leadHeight)
+        iconLead = IconsLead()
+      end
+
+      local contentH = max(textH, control.widgetH, iconsHeight)
+      h = contentH + (2 * ROW_PAD_Y)
+
+      -- Center the shorter column against the taller one so title/helper and control
+      -- share a vertical midpoint. Icons center on the full title+helper block.
+      local textTop = ROW_PAD_Y + floor((contentH - textH) / 2)
+      local widgetTop = ROW_PAD_Y + floor((contentH - control.widgetH) / 2)
+
+      PlaceIconColumn(textTop, textH)
+      row.label:ClearAllPoints()
+      row.label:SetPoint("TOPLEFT", row, "TOPLEFT", ROW_PAD_X + iconLead, -textTop)
+      if control.newFeatureBadge then
+        UI.PlaceNewFeatureBadge(control.newFeatureBadge, row.label, textW)
+      end
+      if scopeShown then
+        if control.newFeatureBadge then
+          scopeTag:ClearAllPoints()
+          scopeTag:SetPoint("LEFT", control.newFeatureBadge, "RIGHT", CHAR_SCOPE_MARK_GAP, 0)
+        else
+          PlaceCharScopeMark(scopeTag, row.label, textW)
+        end
+      end
+      if control.desc then
+        control.desc:ClearAllPoints()
+        control.desc:SetPoint("TOPLEFT", row.label, "BOTTOMLEFT", 0, -TEXT_GAP)
+      end
+
+      if widget then
+        widget:ClearAllPoints()
+        widget:SetPoint("TOPRIGHT", row, "TOPRIGHT", -ROW_PAD_X, -widgetTop)
+        if control.widgetFill then
+          widget:SetPoint(
+            "TOPLEFT",
+            row,
+            "TOPLEFT",
+            ROW_PAD_X + textW + iconLead + CONTROL_GAP,
+            -widgetTop
+          )
+        end
+      end
+    end
+
+    row:SetWidth(width)
+    row:SetHeight(h)
+    control.height = h
+    control._layouting = false
+    return h
+  end
+
+  -- Provisional until the layout pass assigns width.
+  local provisional = control.widgetH + (2 * ROW_PAD_Y)
+  if control.icon then
+    provisional = max(provisional, (control.iconHeight or control.iconSize or 0) + (2 * ROW_PAD_Y))
+  end
+  if control.desc then
+    provisional = provisional + (control.descBelow and (DESC_BELOW_GAP + 28) or 14)
+  end
+  control.height = provisional
+  row:SetHeight(provisional)
+end
+
+--- Shared by SpellMultiSelect.lua.
+Options.AttachOptionText = AttachOptionText
+Options.AddRowHover = AddRowHover
+
+local function SetDescAlpha(control, a)
+  if control.desc then
+    control.desc:SetAlpha(a)
+  end
+  if control.icon then
+    control.icon:SetAlpha(a)
+  end
+  if control.scopeTag then
+    control.scopeTag:SetAlpha(a)
+  end
+end
+
+local function ClearHoverIfDisabled(row, disabled)
+  if disabled and row.cmClearHover then
+    row.cmClearHover()
+  end
+end
+
+---------------------------------------------------------------------------------------
+--                                    TOGGLE                                         --
+---------------------------------------------------------------------------------------
+local TOGGLE_TRACK_W = 40
+local TOGGLE_TRACK_H = 20
+local TOGGLE_KNOB = 14
+local TOGGLE_KNOB_PAD = 3
+local TOGGLE_KNOB_ON_X = TOGGLE_TRACK_W - TOGGLE_KNOB - TOGGLE_KNOB_PAD
+local TOGGLE_ANIM_DURATION = 0.14
+
+local function Lerp(a, b, t)
+  return a + (b - a) * t
+end
+
+function UI.MakeToggle(parent, opts)
+  local row = CreateFrame("Button", nil, parent)
+  row:SetHeight(ROW_H)
+  AddRowLabel(row, opts.label)
+
+  local track = CreateFrame("Frame", nil, row)
+  track:SetSize(TOGGLE_TRACK_W, TOGGLE_TRACK_H)
+
+  -- Stadium: a circle cap on each end plus a bar between their centers. The
+  -- scalable mask replaces the low-res portrait corners StyleRounded uses, so
+  -- the 20px pill and the knob stay smooth. A 1px border pill sits behind.
+  local function AddStadium(layer, inset)
+    local h = TOGGLE_TRACK_H - (inset * 2)
+    local function cap(point, x)
+      local tex = track:CreateTexture(nil, layer)
+      tex:SetSize(h, h)
+      tex:SetPoint(point, track, point, x, 0)
+      local mask = track:CreateMaskTexture()
+      UI.SetCircleMask(mask)
+      mask:SetAllPoints(tex)
+      tex:AddMaskTexture(mask)
+      return tex
+    end
+    local left = cap("LEFT", inset)
+    local right = cap("RIGHT", -inset)
+    -- CircleMaskScalable's disk sits inside the texture (soft edge, not full
+    -- bleed). A bar as tall as the texture box sticks out above and below
+    -- the caps. 2/64 is enough of that margin to hide the lip.
+    local lip = h * (2 / 64)
+    local mid = track:CreateTexture(nil, layer)
+    mid:SetPoint("TOPLEFT", left, "TOP", 0, -lip)
+    mid:SetPoint("BOTTOMRIGHT", right, "BOTTOM", 0, lip)
+    return function(r, g, b, a)
+      a = a or 1
+      left:SetColorTexture(r, g, b, a)
+      right:SetColorTexture(r, g, b, a)
+      mid:SetColorTexture(r, g, b, a)
+    end
+  end
+
+  local setBorder = AddStadium("BACKGROUND", 0)
+  local setFill = AddStadium("ARTWORK", 1)
+  setFill(C.trackOff[1], C.trackOff[2], C.trackOff[3], 1)
+  setBorder(C.cardBorder[1], C.cardBorder[2], C.cardBorder[3], C.cardBorder[4] or 1)
+
+  local knob = UI.CreateCircle(track, "OVERLAY", C.white)
+  knob:SetSize(TOGGLE_KNOB, TOGGLE_KNOB)
+  knob:SetPoint("LEFT", track, "LEFT", TOGGLE_KNOB_PAD, 0)
+
+  local control = { frame = row, height = ROW_H, widget = track, widgetH = TOGGLE_TRACK_H }
+  local displayT -- nil until first Refresh; 0 = off, 1 = on
+  local animFrom, animTo, animElapsed
+
+  local function ApplyToggleVisual(t)
+    local x = Lerp(TOGGLE_KNOB_PAD, TOGGLE_KNOB_ON_X, t)
+    knob:ClearAllPoints()
+    knob:SetPoint("LEFT", track, "LEFT", x, 0)
+    setFill(
+      Lerp(C.trackOff[1], C.toggleOn[1], t),
+      Lerp(C.trackOff[2], C.toggleOn[2], t),
+      Lerp(C.trackOff[3], C.toggleOn[3], t),
+      1
+    )
+    setBorder(
+      Lerp(C.cardBorder[1], C.toggleOn[1] * 0.85, t),
+      Lerp(C.cardBorder[2], C.toggleOn[2] * 0.85, t),
+      Lerp(C.cardBorder[3], C.toggleOn[3] * 0.85, t),
+      1
+    )
+    knob:SetColorTexture(0.95, 0.95, 0.95, 1)
+  end
+
+  local function StopToggleAnim()
+    track:SetScript("OnUpdate", nil)
+    animElapsed = nil
+  end
+
+  local function StartToggleAnim(fromT, toT)
+    animFrom = fromT
+    animTo = toT
+    animElapsed = 0
+    track:SetScript("OnUpdate", function(_, elapsed)
+      animElapsed = (animElapsed or 0) + (elapsed or 0)
+      local p = min(1, animElapsed / TOGGLE_ANIM_DURATION)
+      local eased = 1 - (1 - p) * (1 - p)
+      displayT = Lerp(animFrom, animTo, eased)
+      ApplyToggleVisual(displayT)
+      if p >= 1 then
+        displayT = animTo
+        ApplyToggleVisual(displayT)
+        StopToggleAnim()
+      end
+    end)
+  end
+
+  function control.Refresh()
+    local value = opts.get and opts.get()
+    local target = value and 1 or 0
+    local disabled = IsDisabled(opts)
+
+    if displayT == nil then
+      displayT = target
+      ApplyToggleVisual(displayT)
+    elseif abs(displayT - target) > 0.001 then
+      -- Already easing toward this target (e.g. Options.Sync from another control).
+      if not (animElapsed and animTo == target) then
+        StartToggleAnim(displayT, target)
+      end
+    else
+      StopToggleAnim()
+      displayT = target
+      ApplyToggleVisual(displayT)
+    end
+
+    local a = disabled and DISABLED_A or 1
+    row.label:SetAlpha(a)
+    track:SetAlpha(a)
+    SetDescAlpha(control, a)
+    ClearHoverIfDisabled(row, disabled)
+    row:SetEnabled(not disabled)
+    if disabled then
+      track:Hide()
+    else
+      track:Show()
+    end
+    if control.watermark then
+      -- Only stamp when watermarkWhenDisabled resolves to a non-empty string so composite
+      -- disabled() reasons (e.g. Reticle Targeting off) can grey the row without a false
+      -- "DynamicCam" overlay.
+      local mark = opts.watermarkWhenDisabled
+      if type(mark) == "function" then
+        mark = mark()
+      end
+      if disabled and type(mark) == "string" and mark ~= "" then
+        if control.watermark.stamp then
+          control.watermark.stamp:SetText(UI.StripColors(mark) or "")
+        end
+        control.watermark:Show()
+      else
+        control.watermark:Hide()
+      end
+    end
+  end
+
+  row:SetScript("OnClick", function()
+    if IsDisabled(opts) then
+      return
+    end
+    -- Captured up front so a confirmed toggle applies the value the user actually clicked.
+    local newValue = not (opts.get and opts.get())
+    local function apply()
+      if opts.set then
+        opts.set(newValue)
+      end
+      Options.Sync()
+    end
+    if opts.confirm then
+      UI.Confirm(opts.confirmText or "Are you sure?", apply)
+    else
+      apply()
+    end
+  end)
+  AddRowHover(row, opts)
+  AttachOptionText(control, row, opts, 20)
+
+  -- Optional stamp over the row while disabled (string or function returning string/nil).
+  local markOpt = opts.watermarkWhenDisabled
+  local markInitial = type(markOpt) == "function" and markOpt() or markOpt
+  if type(markInitial) == "string" and markInitial ~= "" then
+    control.watermark = UI.CreateWatermark(row, markInitial, UI.Fonts.nav)
+  elseif type(markOpt) == "function" then
+    control.watermark = UI.CreateWatermark(row, "Inactive", UI.Fonts.nav)
+  end
+
+  return Register(control)
+end
+
+---------------------------------------------------------------------------------------
+--                                    SLIDER                                         --
+---------------------------------------------------------------------------------------
+local SLIDER_ANIM_DURATION = 0.14
+local STEP_ICON_ALPHA = 0.45
+
+function UI.MakeSlider(parent, opts)
+  local row = CreateFrame("Frame", nil, parent)
+  row:SetHeight(ROW_H)
+  AddRowLabel(row, opts.label)
+
+  -- Right-column host aligns with dropdowns/buttons. The value readout sits at the host's
+  -- left edge (so its left aligns with the other controls) and the slider fills the rest.
+  local host = CreateFrame("Frame", nil, row)
+  host:SetHeight(22)
+
+  local valueText = UI.CreateFontString(host, "OVERLAY", UI.Fonts.base, "GameFontNormal")
+  valueText:SetPoint("LEFT", host, "LEFT", 0, 0)
+  valueText:SetWidth(34)
+  valueText:SetJustifyH("LEFT")
+  valueText:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
+
+  local function MakeStepButton(atlas)
+    local button = CreateFrame("Button", nil, host)
+    button:SetSize(16, 16)
+    local icon = button:CreateTexture(nil, "ARTWORK")
+    icon:SetAtlas(atlas, true)
+    local iconH = icon:GetHeight() or 16
+    local iconW = icon:GetWidth() or 16
+    if iconH > 0 then
+      local scale = 10 / iconH
+      icon:SetSize(iconW * scale, 10)
+    end
+    icon:SetPoint("CENTER", button, "CENTER", 0, 0)
+    icon:SetAlpha(STEP_ICON_ALPHA)
+    button.icon = icon
+    button:SetScript("OnEnter", function()
+      if button:IsEnabled() then
+        icon:SetAlpha(1)
+      end
+    end)
+    button:SetScript("OnLeave", function()
+      icon:SetAlpha(STEP_ICON_ALPHA)
+    end)
+    return button
+  end
+
+  local minus = MakeStepButton("common-icon-minus")
+  minus:SetPoint("LEFT", valueText, "RIGHT", 4, 0)
+  local plus = MakeStepButton("common-icon-plus")
+  plus:SetPoint("RIGHT", host, "RIGHT", 0, 0)
+
+  local slider = CreateFrame("Slider", nil, host)
+  slider:SetOrientation("HORIZONTAL")
+  -- Continuous thumb while dragging; we snap the committed value to `step` ourselves.
+  slider:SetObeyStepOnDrag(false)
+  slider:SetHeight(16)
+  slider:SetPoint("LEFT", minus, "RIGHT", 6, 0)
+  slider:SetPoint("RIGHT", plus, "LEFT", -6, 0)
+  slider:SetMinMaxValues(opts.min or 0, opts.max or 1)
+  slider:SetValueStep(opts.step or 1)
+
+  local track = slider:CreateTexture(nil, "BACKGROUND")
+  track:SetColorTexture(C.trackOff[1], C.trackOff[2], C.trackOff[3], 1)
+  track:SetHeight(4)
+  -- Inset so the thumb can travel a few pixels past the visible bar. The
+  -- slider itself still clamps the texture to its frame.
+  local TRACK_OVERHANG = 3
+  track:SetPoint("LEFT", slider, "LEFT", TRACK_OVERHANG, 0)
+  track:SetPoint("RIGHT", slider, "RIGHT", -TRACK_OVERHANG, 0)
+
+  -- Filled portion uses the same green as toggle tracks.
+  local fill = slider:CreateTexture(nil, "ARTWORK")
+  fill:SetColorTexture(C.toggleOn[1], C.toggleOn[2], C.toggleOn[3], 1)
+  fill:SetHeight(4)
+  fill:SetPoint("LEFT", track, "LEFT", 0, 0)
+  fill:SetWidth(1)
+
+  -- Diamond pip. The portrait circle is the fallback when this atlas is missing.
+  -- The slider parks the thumb texture on the track ends at min/max. The pip
+  -- mask draws the diamond inside that box, so the points stop short while the
+  -- fill (full track width) is already empty or full. Scale the mask until the
+  -- points meet the texture edges.
+  local THUMB_SIZE = 15
+  local DIAMOND_MASK_SCALE = 1.4
+  local thumb = slider:CreateTexture(nil, "OVERLAY")
+  thumb:SetColorTexture(0.88, 0.88, 0.88, 1)
+  thumb:SetSize(THUMB_SIZE, THUMB_SIZE)
+  local thumbMask = slider:CreateMaskTexture()
+  local thumbMaskAtlas = "progress-bar-diamond-pip-mask"
+  if C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(thumbMaskAtlas) then
+    thumbMask:SetAtlas(thumbMaskAtlas, false, "LINEAR")
+  else
+    thumbMask:SetTexture(
+      "Interface\\CHARACTERFRAME\\TempPortraitAlphaMask",
+      "CLAMPTOBLACKADDITIVE",
+      "CLAMPTOBLACKADDITIVE"
+    )
+  end
+  thumbMask:SetSize(THUMB_SIZE * DIAMOND_MASK_SCALE, THUMB_SIZE * DIAMOND_MASK_SCALE)
+  thumbMask:SetPoint("CENTER", thumb, "CENTER", 0, 0)
+  thumb:AddMaskTexture(thumbMask)
+  slider:SetThumbTexture(thumb)
+
+  local control = {
+    frame = row,
+    height = ROW_H,
+    widget = host,
+    widgetH = 22,
+    widgetFill = true,
+  }
+  local suppress = false
+  local displayValue
+  local committedValue
+  local animFrom, animTo, animElapsed
+  local userActive = false
+  local rightClicking = false
+
+  local function stepRound(value)
+    local step = opts.step or 1
+    local minV = opts.min or 0
+    local maxV = opts.max or 1
+    local snapped = floor((value / step) + 0.5) * step
+    -- Avoid float drift past the configured bounds.
+    if snapped < minV then
+      return minV
+    end
+    if snapped > maxV then
+      return maxV
+    end
+    return snapped
+  end
+
+  local function UpdateFill(val)
+    local minV, maxV = slider:GetMinMaxValues()
+    local width = slider:GetWidth() or 0
+    if width <= 0 or maxV <= minV then
+      fill:SetWidth(1)
+      return
+    end
+    local pct = (val - minV) / (maxV - minV)
+    if pct < 0 then
+      pct = 0
+    elseif pct > 1 then
+      pct = 1
+    end
+    -- Thumb texture stays inside the slider frame. The visible bar is inset,
+    -- so at min/max the diamond sits a few pixels past the bar. Fill runs
+    -- from the bar's left edge to the thumb.
+    local thumbW = thumb:GetWidth() or THUMB_SIZE
+    local travel = width - thumbW
+    if travel < 0 then
+      travel = 0
+    end
+    local fillW = (pct * travel) - TRACK_OVERHANG
+    if fillW <= 0 then
+      fill:Hide()
+    else
+      fill:Show()
+      fill:SetWidth(fillW)
+    end
+  end
+
+  local function StopSliderAnim()
+    slider:SetScript("OnUpdate", nil)
+    animElapsed = nil
+  end
+
+  local function ApplyStep(button, active)
+    button:SetEnabled(active)
+    local alpha = STEP_ICON_ALPHA
+    if active and button:IsMouseOver() then
+      alpha = 1
+    end
+    button.icon:SetAlpha(alpha)
+  end
+
+  local function UpdateSteppers(val)
+    local disabled = IsDisabled(opts)
+    local minV = opts.min or 0
+    local maxV = opts.max or 1
+    local stepped = stepRound(val or 0)
+    local atMin = abs(stepped - minV) < 0.0001
+    local atMax = abs(stepped - maxV) < 0.0001
+    ApplyStep(minus, not disabled and not atMin)
+    ApplyStep(plus, not disabled and not atMax)
+  end
+
+  local function ApplyDisplay(val, writeWidget)
+    displayValue = val
+    if writeWidget then
+      suppress = true
+      slider:SetValue(val)
+      suppress = false
+    end
+    valueText:SetText(tostring(stepRound(val)))
+    UpdateFill(val)
+    UpdateSteppers(val)
+  end
+
+  local function CommitStepped(raw, sync)
+    local stepped = stepRound(raw)
+    if committedValue ~= nil and abs(committedValue - stepped) < 0.0001 then
+      if sync then
+        Options.Sync()
+      end
+      return
+    end
+    committedValue = stepped
+    if opts.set then
+      opts.set(stepped)
+    end
+    if sync then
+      Options.Sync()
+    end
+  end
+
+  local function Nudge(direction)
+    if IsDisabled(opts) then
+      return
+    end
+    StopSliderAnim()
+    userActive = false
+    local current = committedValue
+    if current == nil then
+      current = stepRound((opts.get and opts.get()) or displayValue or opts.min or 0)
+    end
+    local stepped = stepRound(current + (direction * (opts.step or 1)))
+    ApplyDisplay(stepped, true)
+    CommitStepped(stepped, true)
+  end
+
+  minus:SetScript("OnClick", function()
+    Nudge(-1)
+  end)
+  plus:SetScript("OnClick", function()
+    Nudge(1)
+  end)
+
+  local function ResetToDefault()
+    if IsDisabled(opts) or opts.default == nil then
+      return
+    end
+    StopSliderAnim()
+    userActive = false
+    local stepped = stepRound(opts.default)
+    ApplyDisplay(stepped, true)
+    CommitStepped(stepped, true)
+  end
+
+  local function StartSliderAnim(fromV, toV)
+    animFrom = fromV
+    animTo = toV
+    animElapsed = 0
+    slider:SetScript("OnUpdate", function(_, elapsed)
+      animElapsed = (animElapsed or 0) + (elapsed or 0)
+      local p = min(1, animElapsed / SLIDER_ANIM_DURATION)
+      local eased = 1 - (1 - p) * (1 - p)
+      local val = Lerp(animFrom, animTo, eased)
+      ApplyDisplay(val, true)
+      if p >= 1 then
+        ApplyDisplay(animTo, true)
+        StopSliderAnim()
+      end
+    end)
+  end
+
+  slider:HookScript("OnMouseDown", function(_, button)
+    if button == "RightButton" then
+      -- The slider widget sets its value from the cursor before this hook.
+      -- Mark the click so OnValueChanged does not keep that position.
+      rightClicking = true
+      ResetToDefault()
+      return
+    end
+    if button ~= "LeftButton" then
+      rightClicking = true
+      return
+    end
+    StopSliderAnim()
+    userActive = true
+  end)
+  slider:HookScript("OnMouseUp", function(_, button)
+    if button ~= "LeftButton" then
+      if button == "RightButton" then
+        rightClicking = true
+        ResetToDefault()
+      end
+      userActive = false
+      if C_Timer and C_Timer.After then
+        C_Timer.After(0, function()
+          rightClicking = false
+        end)
+      else
+        rightClicking = false
+      end
+      return
+    end
+    rightClicking = false
+    userActive = false
+    -- Snap thumb + fill to the committed step when the drag ends.
+    local stepped = stepRound(displayValue or slider:GetValue() or 0)
+    ApplyDisplay(stepped, true)
+    CommitStepped(stepped, true)
+  end)
+  slider:HookScript("OnSizeChanged", function()
+    if displayValue ~= nil then
+      UpdateFill(displayValue)
+    end
+  end)
+
+  slider:SetScript("OnValueChanged", function(_, value)
+    if suppress then
+      return
+    end
+    -- The slider widget moves the thumb for every mouse button. A right click
+    -- must not keep that cursor position; put the value back on the default.
+    if
+      IsMouseButtonDown("RightButton") or (rightClicking and not IsMouseButtonDown("LeftButton"))
+    then
+      rightClicking = true
+      ResetToDefault()
+      return
+    end
+    displayValue = value
+    valueText:SetText(tostring(stepRound(value)))
+    UpdateFill(value)
+    UpdateSteppers(value)
+    -- Live-commit stepped values while dragging so feature previews update, without
+    -- snapping the thumb (Refresh skips SetValue while userActive).
+    CommitStepped(value, true)
+  end)
+
+  function control.Refresh()
+    local value = (opts.get and opts.get()) or opts.min or 0
+    value = stepRound(value)
+    local disabled = IsDisabled(opts)
+    committedValue = value
+
+    if not userActive then
+      if displayValue == nil then
+        ApplyDisplay(value, true)
+      elseif abs(displayValue - value) > 0.0001 and not (animElapsed and animTo == value) then
+        StartSliderAnim(displayValue, value)
+      end
+    end
+
+    slider:SetEnabled(not disabled)
+    local a = disabled and DISABLED_A or 1
+    row.label:SetAlpha(a)
+    valueText:SetAlpha(a)
+    slider:SetAlpha(a)
+    UpdateSteppers(value)
+    SetDescAlpha(control, a)
+    ClearHoverIfDisabled(row, disabled)
+    if control.watermark then
+      if disabled then
+        local mark = opts.watermarkWhenDisabled
+        if type(mark) == "function" then
+          mark = mark()
+        end
+        if type(mark) == "string" and mark ~= "" then
+          if control.watermark.stamp then
+            control.watermark.stamp:SetText(UI.StripColors(mark) or "")
+          end
+          control.watermark:Show()
+        else
+          control.watermark:Hide()
+        end
+      else
+        control.watermark:Hide()
+      end
+    end
+  end
+
+  AddRowHover(row, opts, slider)
+  AttachOptionText(control, row, opts, 22)
+
+  -- Optional stamp over the row while disabled (string or function returning string/nil).
+  local markOpt = opts.watermarkWhenDisabled
+  local markInitial = type(markOpt) == "function" and markOpt() or markOpt
+  if type(markInitial) == "string" and markInitial ~= "" then
+    control.watermark = UI.CreateWatermark(row, markInitial, UI.Fonts.nav)
+  elseif type(markOpt) == "function" then
+    control.watermark = UI.CreateWatermark(row, "Unavailable", UI.Fonts.nav)
+  end
+
+  return Register(control)
+end
+
+---------------------------------------------------------------------------------------
+--                                   DROPDOWN                                        --
+---------------------------------------------------------------------------------------
+function UI.MakeDropdown(parent, opts)
+  local row = CreateFrame("Frame", nil, parent)
+  row:SetHeight(ROW_H)
+  AddRowLabel(row, opts.label)
+
+  local button = CreateFrame("Button", nil, row, "BackdropTemplate")
+  button:SetHeight(22)
+  UI.StylePill(button, C.trackOff, { 0, 0, 0, 0 })
+
+  local text = UI.CreateFontString(button, "OVERLAY", UI.Fonts.base, "GameFontHighlightSmall")
+  text:SetPoint("LEFT", button, "LEFT", 8, 0)
+  text:SetPoint("RIGHT", button, "RIGHT", -22, 0)
+  text:SetJustifyH("LEFT")
+  text:SetTextColor(C.text[1], C.text[2], C.text[3])
+
+  local arrow = button:CreateTexture(nil, "OVERLAY")
+  arrow:SetAtlas("UI-Journeys-Delve-Arrow-down-pressed", true)
+  local arrowH = arrow:GetHeight() or 14
+  local arrowW = arrow:GetWidth() or 14
+  if arrowH > 12 and arrowH > 0 then
+    local scale = 12 / arrowH
+    arrow:SetSize(arrowW * scale, 12)
+  end
+  arrow:SetPoint("RIGHT", button, "RIGHT", -6, 1)
+
+  local control = {
+    frame = row,
+    height = ROW_H,
+    widget = button,
+    widgetH = 22,
+    widgetFill = true,
+  }
+
+  local function orderedIds()
+    if opts.order then
+      return opts.order
+    end
+    local ids = {}
+    for id in pairs(opts.values) do
+      tinsert(ids, id)
+    end
+    tsort(ids)
+    return ids
+  end
+
+  -- Custom popup menu (FULLSCREEN_DIALOG strata) instead of MenuUtil: the options window
+  -- is a top-level HIGH-strata frame, which can render over a MenuUtil context menu and
+  -- clip the list. A dedicated high-strata popup guarantees the full list is visible, and
+  -- it scrolls + filters so long lists (e.g. every bindable action) stay usable.
+  local ITEM_H = 22
+  local MENU_PAD = 4
+  local BAR_GUTTER = 10
+  local FILTER_MIN = 12
+  local MAX_ROWS = 12
+  local menu
+
+  local function CloseMenu()
+    if menu then
+      menu:Hide()
+      menu.closer:Hide()
+    end
+  end
+
+  local function EnsureItem(i)
+    local item = menu.items[i]
+    if item then
+      return item
+    end
+    item = CreateFrame("Button", nil, menu.content)
+    item:SetHeight(ITEM_H)
+    local hl = item:CreateTexture(nil, "BACKGROUND")
+    hl:SetAllPoints(item)
+    hl:SetColorTexture(1, 1, 1, 0.09)
+    hl:Hide()
+    item.hl = hl
+    item.text = UI.CreateFontString(item, "OVERLAY", UI.Fonts.base, "GameFontHighlightSmall")
+    item.text:SetPoint("LEFT", item, "LEFT", 8, 0)
+    item.text:SetPoint("RIGHT", item, "RIGHT", -8, 0)
+    item.text:SetJustifyH("LEFT")
+    item.text:SetTextColor(C.text[1], C.text[2], C.text[3])
+    item:SetScript("OnEnter", function(self)
+      self.hl:Show()
+    end)
+    item:SetScript("OnLeave", function(self)
+      self.hl:Hide()
+    end)
+    item:SetScript("OnClick", function(self)
+      CloseMenu()
+      if opts.set then
+        opts.set(self.id)
+      end
+      Options.Sync()
+    end)
+    menu.items[i] = item
+    return item
+  end
+
+  local function Populate(filterText)
+    local ids = orderedIds()
+    filterText = filterText and strlower(filterText) or ""
+    local shown = 0
+    for _, id in ipairs(ids) do
+      local labelText = UI.StripColors(opts.values[id]) or id
+      local match = filterText == ""
+      if not match then
+        match = strfind(strlower(labelText), filterText, 1, true) ~= nil
+          or strfind(strlower(id), filterText, 1, true) ~= nil
+      end
+      if match then
+        shown = shown + 1
+        local item = EnsureItem(shown)
+        item.id = id
+        item.text:SetText(labelText)
+        item:ClearAllPoints()
+        item:SetPoint("TOPLEFT", menu.content, "TOPLEFT", 0, -(shown - 1) * ITEM_H)
+        item:SetPoint("TOPRIGHT", menu.content, "TOPRIGHT", 0, -(shown - 1) * ITEM_H)
+        item:Show()
+      end
+    end
+    for i = shown + 1, #menu.items do
+      menu.items[i]:Hide()
+    end
+    menu.content:SetHeight(max(shown * ITEM_H, 1))
+    menu.scroll:SetVerticalScroll(0)
+
+    -- Only reserve the scrollbar gutter when the list actually overflows.
+    local needsBar = shown > MAX_ROWS
+    local gutter = needsBar and BAR_GUTTER or 0
+    local menuW = menu:GetWidth()
+    local scrollW = menuW - (2 * MENU_PAD) - gutter
+    local visibleRows = needsBar and MAX_ROWS or max(shown, 1)
+    local listH = visibleRows * ITEM_H
+    menu.content:SetWidth(scrollW)
+    menu.scroll:SetWidth(scrollW)
+    menu.scroll:SetHeight(listH)
+
+    local topPad = MENU_PAD
+    if menu.filter:IsShown() then
+      topPad = MENU_PAD + 22 + MENU_PAD
+    end
+    menu:SetHeight(topPad + listH + MENU_PAD)
+
+    if menu.scroll.cmUpdate then
+      menu.scroll.cmUpdate()
+    end
+  end
+
+  local function EnsureMenu()
+    if menu then
+      return
+    end
+    local closer = CreateFrame("Button", nil, UIParent)
+    closer:SetAllPoints(UIParent)
+    closer:SetFrameStrata("FULLSCREEN_DIALOG")
+    closer:EnableMouse(true)
+    closer:Hide()
+
+    menu = CreateFrame("Frame", nil, UIParent)
+    menu:SetFrameStrata("FULLSCREEN_DIALOG")
+    menu:SetFrameLevel(closer:GetFrameLevel() + 10)
+    menu:SetToplevel(true)
+    UI.StyleRounded(menu, C.windowBg, C.windowBorder, UI.Radius.window)
+    menu:Hide()
+    menu.items = {}
+    menu.closer = closer
+
+    local filter = CreateFrame("EditBox", nil, menu)
+    filter:SetAutoFocus(false)
+    filter:SetHeight(22)
+    UI.SetEditBoxFont(filter)
+    filter:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
+    filter:SetTextInsets(8, 8, 0, 0)
+    UI.StyleRounded(filter, C.inputBg, C.cardBorder, UI.Radius.control)
+    filter:SetScript("OnTextChanged", function(self)
+      Populate(self:GetText())
+    end)
+    filter:SetScript("OnEscapePressed", CloseMenu)
+    menu.filter = filter
+
+    local scroll, content, bar = UI.CreateScrollFrame(menu)
+    menu.scroll = scroll
+    menu.content = content
+    menu.bar = bar
+
+    closer:SetScript("OnClick", CloseMenu)
+    menu:SetScript("OnHide", function()
+      closer:Hide()
+    end)
+  end
+
+  local function OpenMenu()
+    EnsureMenu()
+    local count = #orderedIds()
+    local useFilter = count > FILTER_MIN
+    -- Size from the select's laid-out edges. Anchor-sized controls can report
+    -- GetWidth() as 0, and a UIParent popup does not share the options frame's
+    -- scale, so a raw GetWidth() (or the old 220 minimum) made the list a
+    -- different width than the closed control.
+    local left = button:GetLeft()
+    local right = button:GetRight()
+    local menuScale = menu:GetEffectiveScale()
+    if not menuScale or menuScale <= 0 then
+      menuScale = 1
+    end
+    local width
+    if left and right and right > left then
+      local buttonScale = button:GetEffectiveScale() or 1
+      width = (right - left) * buttonScale / menuScale
+    else
+      width = button:GetWidth() or 0
+    end
+
+    menu:SetWidth(width)
+
+    local top = -MENU_PAD
+    if useFilter then
+      menu.filter:Show()
+      menu.filter:SetText("")
+      menu.filter:ClearAllPoints()
+      menu.filter:SetPoint("TOPLEFT", menu, "TOPLEFT", MENU_PAD, top)
+      menu.filter:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -MENU_PAD, top)
+      top = top - 22 - MENU_PAD
+    else
+      menu.filter:Hide()
+    end
+
+    menu.scroll:ClearAllPoints()
+    menu.scroll:SetPoint("TOPLEFT", menu, "TOPLEFT", MENU_PAD, top)
+
+    menu.bar:ClearAllPoints()
+    menu.bar:SetPoint("TOP", menu.scroll, "TOP", 0, 0)
+    menu.bar:SetPoint("BOTTOM", menu.scroll, "BOTTOM", 0, 0)
+    menu.bar:SetPoint("LEFT", menu.scroll, "RIGHT", 2, 0)
+
+    Populate("")
+
+    menu:ClearAllPoints()
+    menu:SetPoint("TOPRIGHT", button, "BOTTOMRIGHT", 0, -2)
+    menu.closer:Show()
+    menu:Show()
+    menu:Raise()
+    if useFilter then
+      menu.filter:SetFocus()
+    end
+  end
+
+  button:SetScript("OnClick", function()
+    if IsDisabled(opts) then
+      return
+    end
+    if menu and menu:IsShown() then
+      CloseMenu()
+    else
+      OpenMenu()
+    end
+  end)
+
+  -- Selected-value text: menu offers opts.values, but the stored value can be outside
+  -- that set (e.g. click-cast defaults like ACTIONBUTTON1). opts.display maps those to a
+  -- readable label so the dropdown never renders blank.
+  local function DisplayText(value)
+    if value == nil then
+      return ""
+    end
+    if opts.values[value] then
+      return UI.StripColors(opts.values[value]) or ""
+    end
+    if opts.display then
+      return UI.StripColors(opts.display(value) or "") or ""
+    end
+    return ""
+  end
+
+  function control.Refresh()
+    local value = opts.get and opts.get()
+    text:SetText(DisplayText(value))
+    local disabled = IsDisabled(opts)
+    button:SetEnabled(not disabled)
+    local a = disabled and DISABLED_A or 1
+    row.label:SetAlpha(a)
+    button:SetAlpha(a)
+    SetDescAlpha(control, a)
+    ClearHoverIfDisabled(row, disabled)
+  end
+
+  AddRowHover(row, opts, button)
+  AttachOptionText(control, row, opts, 22)
+  return Register(control)
+end
+
+---------------------------------------------------------------------------------------
+--                                   KEYBIND                                         --
+---------------------------------------------------------------------------------------
+-- Mirrors the AceGUI Keybinding widget capture model:
+--   • Left/Right click enters (or cancels) listening — never binds BUTTON1/BUTTON2.
+--   • Middle / Button4 / Button5 bind via OnMouseDown as BUTTON3/BUTTON4/BUTTON5.
+--   • Mouse wheel and gamepad buttons are also capturable while listening.
+--   • ESC clears the binding; lone modifier keys are ignored.
+--
+-- Keyboard capture uses a shared high-strata sink frame (not the pill button):
+--   • SetPropagateKeyboardInput must be called inside OnKeyDown per key (Mainline).
+--   • EditBox focus / UISpecialFrames otherwise steal ESC intermittently.
+local IGNORE_KEYS = {
+  BUTTON1 = true,
+  BUTTON2 = true,
+  UNKNOWN = true,
+  LSHIFT = true,
+  RSHIFT = true,
+  LCTRL = true,
+  RCTRL = true,
+  LALT = true,
+  RALT = true,
+}
+
+local MOUSE_BUTTON_KEYS = {
+  MiddleButton = "BUTTON3",
+  Button4 = "BUTTON4",
+  Button5 = "BUTTON5",
+}
+
+--- True for Left/Right mouse (BUTTON1/BUTTON2), including SHIFT-/CTRL-/ALT- variants.
+--- Binding those would steal Camera Or Select Or Move / Turn Or Action.
+local function IsPrimaryMouseButtonKey(key)
+  if type(key) ~= "string" or key == "" then
+    return false
+  end
+  local leaf = key:match("([^%-]+)$") or key
+  return leaf == "BUTTON1" or leaf == "BUTTON2"
+end
+
+local keybindCaptureFrame
+local keybindCaptureOnKey
+local keybindCaptureStopPrevious
+
+local function GetKeybindCaptureFrame()
+  if keybindCaptureFrame then
+    return keybindCaptureFrame
+  end
+  local frame = CreateFrame("Frame", nil, UIParent)
+  frame:Hide()
+  frame:SetFrameStrata("TOOLTIP")
+  frame:SetFrameLevel(10000)
+  frame:EnableMouse(false)
+  frame:EnableKeyboard(true)
+  if frame.EnableGamePadButton then
+    frame:EnableGamePadButton(true)
+  end
+  frame:SetScript("OnKeyDown", function(self, key)
+    -- Must be called from inside OnKeyDown or ESC propagates to TOGGLEGAMEMENU /
+    -- UISpecialFrames and EditBoxes instead of clearing the bind.
+    if self.SetPropagateKeyboardInput then
+      self:SetPropagateKeyboardInput(false)
+    end
+    if keybindCaptureOnKey then
+      keybindCaptureOnKey(key)
+    end
+  end)
+  frame:SetScript("OnGamePadButtonDown", function(_, key)
+    if keybindCaptureOnKey then
+      keybindCaptureOnKey(key)
+    end
+  end)
+  keybindCaptureFrame = frame
+  return frame
+end
+
+local function ReleaseKeybindCapture(ownerStop)
+  if keybindCaptureStopPrevious and keybindCaptureStopPrevious ~= ownerStop then
+    local previous = keybindCaptureStopPrevious
+    keybindCaptureStopPrevious = nil
+    keybindCaptureOnKey = nil
+    previous()
+  end
+  keybindCaptureOnKey = nil
+  keybindCaptureStopPrevious = nil
+  if keybindCaptureFrame then
+    keybindCaptureFrame:Hide()
+  end
+end
+
+--- Cancels any in-progress keybind capture (e.g. options window closed mid-listen).
+function Options.CancelKeybindCapture()
+  if not keybindCaptureStopPrevious then
+    return
+  end
+  local stop = keybindCaptureStopPrevious
+  keybindCaptureStopPrevious = nil
+  keybindCaptureOnKey = nil
+  if keybindCaptureFrame then
+    keybindCaptureFrame:Hide()
+  end
+  stop()
+end
+
+function UI.MakeKeybind(parent, opts)
+  local row = CreateFrame("Frame", nil, parent)
+  row:SetHeight(ROW_H)
+  AddRowLabel(row, opts.label)
+
+  local button = CreateFrame("Button", nil, row)
+  button:SetHeight(22)
+  local IDLE = { C.trackOff[1], C.trackOff[2], C.trackOff[3], 1 }
+  local HOVER = { 0.30, 0.30, 0.30, 1 }
+  UI.StylePill(button, IDLE, { 0, 0, 0, 0 })
+  button:EnableMouse(true)
+  button:RegisterForClicks("AnyDown")
+  button:EnableMouseWheel(false)
+
+  local text = UI.CreateFontString(button, "OVERLAY", UI.Fonts.base, "GameFontHighlightSmall")
+  text:SetPoint("CENTER")
+  text:SetTextColor(C.text[1], C.text[2], C.text[3])
+
+  local control = {
+    frame = row,
+    height = ROW_H,
+    widget = button,
+    widgetH = 22,
+    widgetFill = true,
+  }
+  local listening = false
+  local NOT_BOUND = _G.NOT_BOUND or "Not Bound"
+
+  local function applyKeybindIdle()
+    button:cmSetFill(IDLE[1], IDLE[2], IDLE[3], 1)
+    if listening then
+      text:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
+      return
+    end
+    local key = opts.get and opts.get()
+    if key and key ~= "" then
+      text:SetTextColor(C.text[1], C.text[2], C.text[3])
+    else
+      text:SetTextColor(C.textDim[1], C.textDim[2], C.textDim[3])
+    end
+  end
+
+  button:SetScript("OnEnter", function(self)
+    if IsDisabled(opts) or listening then
+      return
+    end
+    self:cmSetFill(HOVER[1], HOVER[2], HOVER[3], 1)
+    text:SetTextColor(1, 1, 1)
+  end)
+  button:SetScript("OnLeave", function(self)
+    if self:IsMouseOver() then
+      return
+    end
+    applyKeybindIdle()
+  end)
+
+  local function stopListening()
+    if not listening then
+      return
+    end
+    listening = false
+    button:EnableMouseWheel(false)
+    if keybindCaptureStopPrevious == stopListening then
+      keybindCaptureOnKey = nil
+      keybindCaptureStopPrevious = nil
+      if keybindCaptureFrame then
+        keybindCaptureFrame:Hide()
+      end
+    end
+    control.Refresh()
+  end
+
+  local function applyKey(key)
+    listening = false
+    button:EnableMouseWheel(false)
+    if keybindCaptureStopPrevious == stopListening then
+      keybindCaptureOnKey = nil
+      keybindCaptureStopPrevious = nil
+      if keybindCaptureFrame then
+        keybindCaptureFrame:Hide()
+      end
+    end
+    -- Defense in depth: never persist LMB/RMB (would unbind camera / turn actions).
+    if IsPrimaryMouseButtonKey(key) then
+      Options.Sync()
+      return
+    end
+    if opts.set then
+      opts.set(key)
+    end
+    Options.Sync()
+  end
+
+  local function captureKey(key)
+    if not listening then
+      return
+    end
+    if key == "ESCAPE" then
+      applyKey("")
+      return
+    end
+    if IGNORE_KEYS[key] or IsPrimaryMouseButtonKey(key) then
+      return
+    end
+    local keyPressed = key
+    if _G.IsShiftKeyDown() then
+      keyPressed = "SHIFT-" .. keyPressed
+    end
+    if _G.IsControlKeyDown() then
+      keyPressed = "CTRL-" .. keyPressed
+    end
+    if _G.IsAltKeyDown() then
+      keyPressed = "ALT-" .. keyPressed
+    end
+    if IsPrimaryMouseButtonKey(keyPressed) then
+      return
+    end
+    applyKey(keyPressed)
+  end
+
+  local function startListening()
+    -- Only one keybind may listen; cancel any previous row without writing a bind.
+    if keybindCaptureStopPrevious and keybindCaptureStopPrevious ~= stopListening then
+      ReleaseKeybindCapture(stopListening)
+    end
+    local focused = GetCurrentKeyBoardFocus and GetCurrentKeyBoardFocus()
+    if focused and focused.ClearFocus then
+      focused:ClearFocus()
+    end
+    listening = true
+    button:EnableMouseWheel(true)
+    keybindCaptureOnKey = captureKey
+    keybindCaptureStopPrevious = stopListening
+    GetKeybindCaptureFrame():Show()
+    text:SetText("> Press key (ESC clears) <")
+    text:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
+  end
+
+  button:SetScript("OnClick", function(_, mouseButton)
+    if IsDisabled(opts) then
+      return
+    end
+    -- Left/Right only toggle listen mode (AceGUI parity). Binding them would steal the
+    -- click used to open/cancel the capture UI.
+    if mouseButton ~= "LeftButton" and mouseButton ~= "RightButton" then
+      return
+    end
+    if listening then
+      stopListening()
+      return
+    end
+    startListening()
+  end)
+
+  button:SetScript("OnMouseDown", function(_, mouseButton)
+    if mouseButton == "LeftButton" or mouseButton == "RightButton" then
+      return
+    end
+    local key = MOUSE_BUTTON_KEYS[mouseButton] or mouseButton
+    captureKey(key)
+  end)
+
+  button:SetScript("OnMouseWheel", function(_, direction)
+    captureKey(direction >= 0 and "MOUSEWHEELUP" or "MOUSEWHEELDOWN")
+  end)
+
+  function control.Refresh()
+    if listening then
+      return
+    end
+    local key = opts.get and opts.get()
+    if key and key ~= "" then
+      text:SetText(key)
+    else
+      text:SetText(NOT_BOUND)
+    end
+    local disabled = IsDisabled(opts)
+    button:SetEnabled(not disabled)
+    local a = disabled and DISABLED_A or 1
+    row.label:SetAlpha(a)
+    button:SetAlpha(a)
+    SetDescAlpha(control, a)
+    ClearHoverIfDisabled(row, disabled)
+    if not disabled and button:IsMouseOver() then
+      button:cmSetFill(HOVER[1], HOVER[2], HOVER[3], 1)
+      text:SetTextColor(1, 1, 1)
+    else
+      applyKeybindIdle()
+    end
+  end
+
+  AddRowHover(row, opts, button)
+  AttachOptionText(control, row, opts, 22)
+  return Register(control)
+end
+
+---------------------------------------------------------------------------------------
+--                                  TEXT INPUT                                       --
+---------------------------------------------------------------------------------------
+function UI.MakeTextInput(parent, opts)
+  local multiline = opts.multiline
+  local lines = type(multiline) == "number" and multiline or (multiline and 6 or 1)
+  local boxHeight = multiline and (lines * 16 + 12) or 24
+  local row = CreateFrame("Frame", nil, parent)
+  AddRowLabel(row, opts.label, opts.labelAllowColors and true or false)
+
+  local box = CreateFrame("Frame", nil, row, "BackdropTemplate")
+  box:SetHeight(boxHeight)
+  UI.StyleRounded(box, C.inputBg, C.cardBorder, UI.Radius.control)
+
+  local edit
+  local helpBtn
+  if multiline then
+    local scrollRight = opts.helpUrl and 22 or 12
+    local barTop = opts.helpUrl and 22 or 6
+    local scroll, mlEdit, bar = UI.CreateMultilineEditScroll(box)
+    scroll:SetPoint("TOPLEFT", box, "TOPLEFT", 8, -6)
+    scroll:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -scrollRight, 6)
+    bar:SetPoint("TOPRIGHT", box, "TOPRIGHT", -4, -barTop)
+    bar:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -4, 6)
+    edit = mlEdit
+    UI.SetEditBoxFont(edit)
+    edit:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
+    edit:SetScript("OnEscapePressed", edit.ClearFocus)
+    -- Clicking the chrome around the edit (padding / rounded fill) also focuses it.
+    box:EnableMouse(true)
+    box:SetScript("OnMouseDown", function()
+      if not IsDisabled(opts) then
+        edit:SetFocus()
+      end
+    end)
+  else
+    edit = CreateFrame("EditBox", nil, box)
+    edit:SetAutoFocus(false)
+    edit:EnableMouse(true)
+    UI.SetEditBoxFont(edit)
+    edit:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
+    edit:SetPoint("TOPLEFT", box, "TOPLEFT", 8, -4)
+    edit:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -8, 4)
+    edit:SetScript("OnEscapePressed", edit.ClearFocus)
+    edit:SetScript("OnEnterPressed", edit.ClearFocus)
+  end
+
+  if multiline and type(opts.helpUrl) == "string" and opts.helpUrl ~= "" then
+    -- Sits in the corner of the code box, above the scrollbar. Clicks stay on
+    -- this button so they do not focus the editor.
+    helpBtn = CreateFrame("Button", nil, box)
+    helpBtn:SetSize(16, 16)
+    helpBtn:SetPoint("TOPRIGHT", box, "TOPRIGHT", -1, -4)
+    helpBtn:SetFrameLevel(box:GetFrameLevel() + 20)
+    if helpBtn.SetPropagateMouseClicks then
+      helpBtn:SetPropagateMouseClicks(false)
+    end
+    local mark = UI.CreateFontString(helpBtn, "OVERLAY", UI.Fonts.base, "GameFontHighlightSmall")
+    mark:SetPoint("CENTER", helpBtn, "CENTER", 0, 0)
+    mark:SetText("?")
+    mark:SetTextColor(C.warning[1], C.warning[2], C.warning[3], 0.8)
+    helpBtn:SetScript("OnEnter", function()
+      mark:SetTextColor(C.warning[1], C.warning[2], C.warning[3], 1)
+    end)
+    helpBtn:SetScript("OnLeave", function()
+      mark:SetTextColor(C.warning[1], C.warning[2], C.warning[3], 0.8)
+    end)
+    helpBtn:SetScript("OnClick", function()
+      if UI.ShowCopyLink then
+        UI.ShowCopyLink(opts.helpUrl, "WoW API Documentation")
+      end
+    end)
+    UI.AttachTooltip(helpBtn, opts.helpTooltip or "WoW API Documentation", "ANCHOR_RIGHT")
+  end
+
+  if type(opts.maxLetters) == "number" and opts.maxLetters > 0 and edit.SetMaxLetters then
+    edit:SetMaxLetters(opts.maxLetters)
+  end
+
+  local control = {
+    frame = row,
+    height = boxHeight + (2 * ROW_PAD_Y),
+    widget = box,
+    widgetH = boxHeight,
+    widgetFill = true,
+    -- Multiline boxes get the larger column (~60%); single-line keeps the default split.
+    textFrac = multiline and 0.40 or nil,
+  }
+
+  -- Optional inert placeholder: a dim overlay FontString shown only while the edit is
+  -- empty. It is never part of GetText()/commit, so it cannot be saved as a real value.
+  local placeholderFs
+  local placeholderText = opts.placeholder and UI.StripColors(opts.placeholder) or nil
+  if placeholderText and placeholderText ~= "" then
+    placeholderFs = UI.CreateFontString(box, "OVERLAY", UI.Fonts.desc, "GameFontHighlightSmall")
+    placeholderFs:SetPoint("TOPLEFT", box, "TOPLEFT", 10, -8)
+    placeholderFs:SetPoint(
+      "TOPRIGHT",
+      box,
+      "TOPRIGHT",
+      multiline and (opts.helpUrl and -26 or -16) or -10,
+      -8
+    )
+    placeholderFs:SetJustifyH("LEFT")
+    placeholderFs:SetJustifyV("TOP")
+    placeholderFs:SetWordWrap(true)
+    placeholderFs:SetText(placeholderText)
+    placeholderFs:SetTextColor(C.textDim[1], C.textDim[2], C.textDim[3], 0.7)
+  end
+
+  local function updatePlaceholder()
+    if not placeholderFs then
+      return
+    end
+    if edit:GetText() == "" then
+      placeholderFs:Show()
+    else
+      placeholderFs:Hide()
+    end
+  end
+
+  -- Validation mirrors AceConfig: a string result is an error message and the value
+  -- is NOT committed (Sync restores the displayed value from get()).
+  local function commit()
+    local value = edit:GetText()
+    if opts.validate then
+      local result = opts.validate(value)
+      if type(result) == "string" then
+        print(CM.Constants.BasePrintMsg .. "|cff909090: " .. result .. "|r")
+        Options.Sync()
+        return
+      end
+    end
+    if opts.set then
+      opts.set(value)
+    end
+    Options.Sync()
+  end
+
+  edit:HookScript("OnEditFocusLost", commit)
+  edit:HookScript("OnTextChanged", updatePlaceholder)
+
+  function control.Refresh()
+    if not edit:HasFocus() then
+      edit:SetText((opts.get and opts.get()) or "")
+    end
+    updatePlaceholder()
+    local disabled = IsDisabled(opts)
+    if edit.SetEnabled then
+      edit:SetEnabled(not disabled)
+    elseif disabled then
+      edit:Disable()
+    else
+      edit:Enable()
+    end
+    edit:EnableMouse(not disabled)
+    local a = disabled and DISABLED_A or 1
+    row.label:SetAlpha(a)
+    box:SetAlpha(a)
+    SetDescAlpha(control, a)
+    ClearHoverIfDisabled(row, disabled)
+    if control.watermark then
+      if disabled then
+        local mark = opts.watermarkWhenDisabled
+        if type(mark) == "function" then
+          mark = mark()
+        end
+        if type(mark) == "string" and mark ~= "" and control.watermark.stamp then
+          control.watermark.stamp:SetText(UI.StripColors(mark) or "")
+        end
+        control.watermark:Show()
+      else
+        control.watermark:Hide()
+      end
+    end
+  end
+
+  -- Optional DynamicCam-style stamp over the whole row while this field is inactive
+  -- (e.g. preline editor: only the active Auto Lock / Enemies Only field is editable).
+  local markOpt = opts.watermarkWhenDisabled
+  local markInitial = type(markOpt) == "function" and markOpt() or markOpt
+  if type(markInitial) == "string" and markInitial ~= "" then
+    control.watermark = UI.CreateWatermark(row, markInitial, UI.Fonts.nav)
+  elseif type(markOpt) == "function" then
+    control.watermark = UI.CreateWatermark(row, "Inactive", UI.Fonts.nav)
+  end
+
+  -- Box chrome must accept mouse so hover fires over padding; edit covers the inner area.
+  box:EnableMouse(true)
+  AddRowHover(row, opts, box, edit)
+  AttachOptionText(control, row, opts, boxHeight)
+  return Register(control)
+end
+
+---------------------------------------------------------------------------------------
+--                                    BUTTON                                         --
+---------------------------------------------------------------------------------------
+--- Default: label on the pill. `layout = "row"` matches toggles/dropdowns (title left,
+--- `buttonLabel` pill right, optional `desc` under the title).
+local function MakeOptionRowButton(parent, opts)
+  local btnH = opts.height or 22
+  local buttonText = opts.buttonLabel or "Edit"
+
+  local row = CreateFrame("Frame", nil, parent)
+  row:SetHeight(ROW_H)
+  AddRowLabel(row, opts.label)
+
+  local button = CreateFrame("Button", nil, row)
+  button:SetHeight(btnH)
+  button:EnableMouse(true)
+  local IDLE = { C.trackOff[1], C.trackOff[2], C.trackOff[3], 1 }
+  local HOVER = { 0.30, 0.30, 0.30, 1 }
+  UI.StylePill(button, IDLE, { 0, 0, 0, 0 })
+
+  local text = UI.CreateFontString(button, "OVERLAY", UI.Fonts.base, "GameFontHighlightSmall")
+  text:SetPoint("CENTER")
+  text:SetText(UI.StripColors(buttonText) or "Edit")
+  text:SetTextColor(C.text[1], C.text[2], C.text[3])
+
+  local function applyButtonIdle()
+    button:cmSetFill(IDLE[1], IDLE[2], IDLE[3], 1)
+    text:SetTextColor(C.text[1], C.text[2], C.text[3])
+  end
+
+  button:SetScript("OnEnter", function(self)
+    if IsDisabled(opts) then
+      return
+    end
+    self:cmSetFill(HOVER[1], HOVER[2], HOVER[3], 1)
+    text:SetTextColor(1, 1, 1)
+  end)
+  button:SetScript("OnLeave", function(self)
+    if self:IsMouseOver() then
+      return
+    end
+    applyButtonIdle()
+  end)
+
+  button:SetScript("OnClick", function()
+    if IsDisabled(opts) then
+      return
+    end
+    if not opts.func then
+      return
+    end
+    if opts.confirm then
+      UI.Confirm(opts.confirmText or "Are you sure?", opts.func)
+    else
+      opts.func()
+    end
+  end)
+
+  local control = {
+    frame = row,
+    height = ROW_H,
+    button = button,
+    widget = button,
+    widgetH = btnH,
+    widgetFill = true,
+  }
+
+  if opts.disabled then
+    function control.Refresh()
+      local disabled = IsDisabled(opts)
+      button:SetEnabled(not disabled)
+      local a = disabled and DISABLED_A or 1
+      row.label:SetAlpha(a)
+      button:SetAlpha(a)
+      text:SetAlpha(a)
+      SetDescAlpha(control, a)
+      ClearHoverIfDisabled(row, disabled)
+      if disabled then
+        applyButtonIdle()
+      end
+    end
+    Register(control)
+    control.Refresh()
+  end
+
+  AddRowHover(row, opts, button)
+  AttachOptionText(control, row, opts, btnH)
+  return control
+end
+
+function UI.MakeButton(parent, opts)
+  if opts.layout == "row" then
+    return MakeOptionRowButton(parent, opts)
+  end
+
+  local btnH = opts.height or 24
+  local btnW = opts.pixelWidth or 200
+  local row = CreateFrame("Frame", nil, parent)
+  row:SetHeight(btnH)
+
+  local button = CreateFrame("Button", nil, row)
+  button:SetHeight(btnH)
+  button:SetWidth(btnW)
+  button:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+  -- Flat borderless fill. opts.danger uses warning red for uninstall-style actions.
+  local IDLE = opts.danger
+      and {
+        C.warning[1] * 0.35,
+        C.warning[2] * 0.35,
+        C.warning[3] * 0.35,
+        1,
+      }
+    or { 0.16, 0.16, 0.16, 1 }
+  local HOVER = opts.danger
+      and {
+        C.warning[1] * 0.55,
+        C.warning[2] * 0.55,
+        C.warning[3] * 0.55,
+        1,
+      }
+    or { 0.26, 0.26, 0.26, 1 }
+  -- Danger actions stay white; neutral buttons use theme text and brighten on hover.
+  local TEXT = opts.danger and { 1, 1, 1 } or { C.text[1], C.text[2], C.text[3] }
+  UI.StylePill(button, IDLE, { 0, 0, 0, 0 })
+
+  local text = UI.CreateFontString(button, "OVERLAY", UI.Fonts.base, "GameFontNormal")
+  text:SetPoint("CENTER")
+  text:SetText(UI.StripColors(opts.label) or "")
+  text:SetTextColor(TEXT[1], TEXT[2], TEXT[3])
+
+  button:SetScript("OnEnter", function(self)
+    self:cmSetFill(HOVER[1], HOVER[2], HOVER[3], HOVER[4] or 1)
+    text:SetTextColor(1, 1, 1)
+  end)
+  button:SetScript("OnLeave", function(self)
+    self:cmSetFill(IDLE[1], IDLE[2], IDLE[3], IDLE[4] or 1)
+    text:SetTextColor(TEXT[1], TEXT[2], TEXT[3])
+  end)
+  button:SetScript("OnClick", function()
+    if not opts.func then
+      return
+    end
+    if opts.confirm then
+      UI.Confirm(opts.confirmText or "Are you sure?", opts.func)
+    else
+      opts.func()
+    end
+  end)
+
+  local control = { frame = row, height = btnH, isButton = true, button = button }
+  if opts.disabled then
+    function control.Refresh()
+      local disabled = IsDisabled(opts)
+      button:SetEnabled(not disabled)
+      local a = disabled and DISABLED_A or 1
+      button:SetAlpha(a)
+      SetDescAlpha(control, a)
+      ClearHoverIfDisabled(row, disabled)
+    end
+    Register(control)
+  end
+
+  -- Buttons keep the label on the button itself; helper text stacks tightly underneath.
+  local raw = opts.desc
+  if type(raw) == "function" then
+    raw = raw()
+  end
+  local plain = raw and UI.StripColors(raw)
+  if plain and plain ~= "" then
+    local desc = UI.CreateFontString(row, "OVERLAY", UI.Fonts.desc, "GameFontHighlightSmall")
+    desc:SetPoint("TOPLEFT", button, "BOTTOMLEFT", 4, -TEXT_GAP)
+    desc:SetJustifyH("LEFT")
+    desc:SetJustifyV("TOP")
+    desc:SetWordWrap(true)
+    desc:SetText(plain)
+    desc:SetTextColor(C.textDim[1], C.textDim[2], C.textDim[3])
+    control.desc = desc
+  end
+
+  function control.SetWidthTo(width)
+    if opts.width == "full" then
+      button:SetWidth(width)
+    end
+    local h = btnH
+    if control.desc then
+      control.desc:SetWidth(max(button:GetWidth(), width) - 8)
+      h = btnH + TEXT_GAP + control.desc:GetStringHeight() + 4
+    end
+    row:SetWidth(width)
+    row:SetHeight(h)
+    control.height = h
+    return h
+  end
+  return control
+end
+
+---------------------------------------------------------------------------------------
+--                              HEADER & DESCRIPTION                                 --
+---------------------------------------------------------------------------------------
+--- Section title: larger font, theme accent (yellow). Accepts a string or
+--- `{ text = "...", newFeatureFlag = true }` for the Alliance "NEW" badge.
+function UI.MakeHeader(parent, textOrOpts)
+  local text = textOrOpts
+  local newFeature = false
+  if type(textOrOpts) == "table" then
+    text = textOrOpts.text or textOrOpts.label
+    newFeature = textOrOpts.newFeatureFlag and true or false
+  end
+
+  local frame = CreateFrame("Frame", nil, parent)
+  frame:SetHeight(26)
+  local fs = UI.CreateFontString(frame, "OVERLAY", UI.Fonts.header, "GameFontNormalLarge")
+  fs:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 2, 2)
+  fs:SetText(UI.StripColors(text) or "")
+  fs:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
+
+  local badge
+  if newFeature then
+    badge = UI.CreateNewFeatureBadge(
+      frame,
+      UI.NewFeatureBadge.contentAtlas,
+      UI.NewFeatureBadge.headerMaxH or UI.NewFeatureBadge.contentMaxH
+    )
+    UI.PlaceNewFeatureBadge(badge, fs, nil, nil, UI.NewFeatureBadge.headerGap)
+  end
+
+  local line = frame:CreateTexture(nil, "ARTWORK")
+  line:SetColorTexture(1, 1, 1, 0.07)
+  line:SetHeight(1)
+  line:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+  line:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+
+  local control = { frame = frame, height = 26, label = fs, badge = badge }
+  -- Re-seat the badge after layout width is known (string width is reliable then).
+  function control.SetWidthTo()
+    if badge then
+      UI.PlaceNewFeatureBadge(badge, fs, nil, nil, UI.NewFeatureBadge.headerGap)
+    end
+    return control.height
+  end
+  return control
+end
+
+function UI.MakeDescription(parent, textOrOpts)
+  local text = textOrOpts
+  local color = C.textDim
+  local warningText
+  local warningColor = C.warning
+  local allowColors = false
+  if type(textOrOpts) == "table" then
+    text = textOrOpts.text
+    if textOrOpts.color then
+      color = textOrOpts.color
+    end
+    if textOrOpts.allowColors then
+      allowColors = true
+    end
+    if textOrOpts.warning and textOrOpts.warning ~= "" then
+      warningText = textOrOpts.warning
+      if textOrOpts.warningColor then
+        warningColor = textOrOpts.warningColor
+      end
+    end
+  end
+
+  local frame = CreateFrame("Frame", nil, parent)
+  local fs = UI.CreateFontString(frame, "OVERLAY", UI.Fonts.base, "GameFontHighlightSmall")
+  fs:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, 0)
+  fs:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, 0)
+  fs:SetJustifyH("LEFT")
+  fs:SetWordWrap(true)
+  local display = allowColors and text or UI.StripColors(text)
+  fs:SetText(display or "")
+  fs:SetTextColor(color[1], color[2], color[3], color[4] or 1)
+
+  local warningFs
+  if warningText then
+    -- Keep warning in the same description block so layout ITEM_GAP does not split the lines.
+    warningFs = UI.CreateFontString(frame, "OVERLAY", UI.Fonts.base, "GameFontHighlightSmall")
+    warningFs:SetPoint("TOPLEFT", fs, "BOTTOMLEFT", 0, -2)
+    warningFs:SetPoint("TOPRIGHT", fs, "BOTTOMRIGHT", 0, -2)
+    warningFs:SetJustifyH("LEFT")
+    warningFs:SetWordWrap(true)
+    warningFs:SetText(UI.StripColors(warningText) or "")
+    warningFs:SetTextColor(warningColor[1], warningColor[2], warningColor[3], warningColor[4] or 1)
+  end
+
+  local control = { frame = frame, height = 20 }
+  -- Height depends on final width; recomputed by the layout once width is known.
+  function control.SetWidthTo(width)
+    fs:SetWidth(width - 8)
+    local h = fs:GetStringHeight()
+    if warningFs then
+      warningFs:SetWidth(width - 8)
+      h = h + 2 + warningFs:GetStringHeight()
+    end
+    h = h + 6
+    frame:SetHeight(h)
+    control.height = h
+    return h
+  end
+  return control
+end
+
+---------------------------------------------------------------------------------------
+--                              PILL MULTI-SELECT FACTORY                             --
+---------------------------------------------------------------------------------------
+--  Builds a pill-based multi-select control with type-ahead suggestions. The
+--  `resolver` table must expose:
+--    resolveToken(token)        -> { token, spellId, name, icon } or nil
+--    filterSuggestions(query, selectedIds, selectedNames) -> { entry, ... }
+--    placeholder                -> string (edit box placeholder)
+--  Public wrappers (MakeSpellMultiSelect, MakeMountMultiSelect) pass the right
+--  resolver.
+--  Related: UI/Options/SpellMultiSelect.lua, UI/Options/MountMultiSelect.lua,
+--  UI/Options/Tabs/TabReticleTargeting.lua, UI/Options/Tabs/TabAutoCursorUnlock.lua
+---------------------------------------------------------------------------------------
+local PILL_BOX_H = 76
+local PILL_H = 20
+local PILL_GAP = 4
+local PILL_PAD_X = 5
+local PILL_ICON_SIZE = 14
+local PILL_BOX_PAD = 6
+local PILL_MAX_VISIBLE_ROWS = 8
+local PILL_SUGGEST_ITEM_H = 22
+local PILL_MENU_PAD = 4
+local PILL_BAR_GUTTER = 10
+local PILL_DEBOUNCE_S = 0.06
+
+function UI.MakePillMultiSelect(parent, opts, resolver)
+  local row = CreateFrame("Frame", nil, parent)
+  -- AddRowLabel is Widgets-local; use AttachOptionText path via a label we create here.
+  local label = UI.CreateFontString(row, "OVERLAY", UI.Fonts.base, "GameFontHighlight")
+  label:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -4)
+  label:SetJustifyH("LEFT")
+  label:SetJustifyV("TOP")
+  label:SetWordWrap(true)
+  label:SetText(UI.StripColors(opts.label) or "")
+  label:SetTextColor(C.text[1], C.text[2], C.text[3])
+  row.label = label
+
+  local box = CreateFrame("Frame", nil, row)
+  box:SetHeight(PILL_BOX_H)
+  UI.StyleRounded(box, C.inputBg, C.cardBorder, UI.Radius.control)
+  box:EnableMouse(true)
+  box:SetClipsChildren(true)
+
+  -- ScrollFrame inside the fixed box for pill overflow, with the bar inset on the right
+  -- (mirrors the multiline edit layout pattern).  Use the 5px bar thickness that
+  -- CreateMultilineEditScroll uses.
+  local pillScroll, pillContent, pillBar = UI.CreateScrollFrame(box, 5)
+  pillScroll:SetPoint("TOPLEFT", box, "TOPLEFT", 8, -6)
+  pillScroll:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -12, 6)
+  pillBar:SetPoint("TOPRIGHT", box, "TOPRIGHT", -4, -6)
+  pillBar:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -4, 6)
+
+  local control = {
+    frame = row,
+    height = PILL_BOX_H + 8,
+    widget = box,
+    widgetH = PILL_BOX_H,
+    widgetFill = true,
+    textFrac = 0.40,
+  }
+
+  local entries = {}
+  local pillFrames = {}
+  local suppressCommit = false
+  local debounceToken = 0
+  local pickingSuggestion = false
+  local suggestMenu
+  local suggestCloser
+  local suggestItems = {}
+
+  local edit = CreateFrame("EditBox", nil, pillContent)
+  edit:SetAutoFocus(false)
+  edit:SetHeight(PILL_H)
+  UI.SetEditBoxFont(edit)
+  edit:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
+  edit:SetTextInsets(2, 2, 0, 0)
+  if edit.SetPlaceholderText then
+    edit:SetPlaceholderText(resolver.placeholder)
+  end
+
+  local function SelectedMaps()
+    local ids, names = {}, {}
+    for _, e in ipairs(entries) do
+      if e.spellId then
+        ids[e.spellId] = true
+      end
+      if e.name then
+        names[strlower(e.name)] = true
+      end
+      if e.token then
+        names[strlower(e.token)] = true
+      end
+    end
+    return ids, names
+  end
+
+  local function IsAlreadySelected(entry)
+    local ids, names = SelectedMaps()
+    if entry.spellId and ids[entry.spellId] then
+      return true
+    end
+    if entry.name and names[strlower(entry.name)] then
+      return true
+    end
+    if entry.token and names[strlower(entry.token)] then
+      return true
+    end
+    return false
+  end
+
+  local function ParseCsvToEntries(csv)
+    local out = {}
+    if not csv or csv == "" then
+      return out
+    end
+    for part in tostring(csv):gmatch("[^,]+") do
+      local entry = resolver.resolveToken(part)
+      if entry then
+        out[#out + 1] = entry
+      end
+    end
+    return out
+  end
+
+  local function EntriesToCsv(list)
+    local parts = {}
+    local seen = {}
+    for _, e in ipairs(list) do
+      if e.spellId and e.spellId > 0 and not seen[e.spellId] then
+        seen[e.spellId] = true
+        parts[#parts + 1] = tostring(e.spellId)
+      end
+    end
+    return tconcat(parts, ", ")
+  end
+
+  local function Commit()
+    if suppressCommit then
+      return
+    end
+    if opts.set then
+      opts.set(EntriesToCsv(entries))
+    end
+    Options.Sync()
+  end
+
+  local function CloseSuggest()
+    if suggestMenu then
+      suggestMenu:Hide()
+    end
+    if suggestCloser then
+      suggestCloser:Hide()
+    end
+  end
+
+  local function LayoutPills()
+    local boxW = pillScroll:GetWidth() or box:GetWidth()
+    if boxW < 40 then
+      boxW = 200
+    end
+    local maxW = boxW - PILL_BOX_PAD * 2
+    local x, y = PILL_BOX_PAD, PILL_BOX_PAD
+
+    for i, pill in ipairs(pillFrames) do
+      if i > #entries then
+        pill:Hide()
+      else
+        local e = entries[i]
+        local name = e.name or e.token or ""
+        pill.text:SetText(name)
+        if e.icon then
+          pill.icon:SetTexture(e.icon)
+          pill.icon:Show()
+          pill.text:ClearAllPoints()
+          pill.text:SetPoint("LEFT", pill.icon, "RIGHT", 3, 0)
+        else
+          pill.icon:Hide()
+          pill.text:ClearAllPoints()
+          pill.text:SetPoint("LEFT", pill, "LEFT", PILL_PAD_X, 0)
+        end
+        local textW = pill.text:GetStringWidth() or 0
+        local w = PILL_PAD_X * 2 + 12 + textW -- × button space
+        if e.icon then
+          w = w + PILL_ICON_SIZE + 3
+        end
+        w = min(w, maxW)
+        pill:SetSize(w, PILL_H)
+        if x + w > maxW + 0.5 and x > PILL_BOX_PAD then
+          x = PILL_BOX_PAD
+          y = y + PILL_H + PILL_GAP
+        end
+        pill:ClearAllPoints()
+        pill:SetPoint("TOPLEFT", pillContent, "TOPLEFT", x, -y)
+        pill:Show()
+        x = x + w + PILL_GAP
+      end
+    end
+
+    local editMin = 60
+    if x + editMin > maxW + 0.5 and x > PILL_BOX_PAD then
+      x = PILL_BOX_PAD
+      y = y + PILL_H + PILL_GAP
+    end
+    edit:ClearAllPoints()
+    edit:SetPoint("TOPLEFT", pillContent, "TOPLEFT", x, -y)
+    edit:SetPoint("RIGHT", pillContent, "RIGHT", -PILL_BOX_PAD, 0)
+    edit:SetHeight(PILL_H)
+
+    -- Size the scroll content to the total pill height. The fixed box clips it.
+    local contentH = max(y + PILL_H + PILL_BOX_PAD, PILL_BOX_H)
+    pillContent:SetSize(boxW, contentH)
+    if pillScroll.cmUpdate then
+      pillScroll.cmUpdate()
+    end
+  end
+
+  local function EnsurePill(i)
+    local pill = pillFrames[i]
+    if pill then
+      return pill
+    end
+    pill = CreateFrame("Frame", nil, pillContent)
+    UI.StyleRounded(pill, C.trackOff, C.cardBorder, UI.Radius.control)
+    pill:SetHeight(PILL_H)
+
+    local icon = pill:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(PILL_ICON_SIZE, PILL_ICON_SIZE)
+    icon:SetPoint("LEFT", pill, "LEFT", PILL_PAD_X, 0)
+    pill.icon = icon
+
+    local text = UI.CreateFontString(pill, "OVERLAY", UI.Fonts.desc, "GameFontHighlightSmall")
+    text:SetJustifyH("LEFT")
+    text:SetTextColor(C.text[1], C.text[2], C.text[3])
+    pill.text = text
+
+    local remove = CreateFrame("Button", nil, pill)
+    remove:SetSize(12, 12)
+    remove:SetPoint("RIGHT", pill, "RIGHT", -3, 0)
+    local rx = UI.CreateFontString(remove, "OVERLAY", UI.Fonts.desc, "GameFontHighlightSmall")
+    rx:SetAllPoints()
+    rx:SetJustifyH("CENTER")
+    rx:SetText("×")
+    rx:SetTextColor(C.textDim[1], C.textDim[2], C.textDim[3])
+    remove:SetScript("OnEnter", function()
+      rx:SetTextColor(C.warning[1], C.warning[2], C.warning[3])
+    end)
+    remove:SetScript("OnLeave", function()
+      rx:SetTextColor(C.textDim[1], C.textDim[2], C.textDim[3])
+    end)
+    pill.remove = remove
+    text:SetPoint("RIGHT", remove, "LEFT", -2, 0)
+
+    pillFrames[i] = pill
+    return pill
+  end
+
+  function control._reflowPills()
+    for i = 1, #entries do
+      local pill = EnsurePill(i)
+      local idx = i
+      pill.remove:SetScript("OnClick", function()
+        if Options.IsDisabled(opts) then
+          return
+        end
+        if idx <= #entries then
+          tremove(entries, idx)
+          control._reflowPills()
+          Commit()
+        end
+      end)
+    end
+    LayoutPills()
+  end
+
+  local function AddEntry(entry)
+    if not entry or not entry.spellId or entry.spellId <= 0 or IsAlreadySelected(entry) then
+      return false
+    end
+    entries[#entries + 1] = {
+      token = tostring(entry.spellId),
+      spellId = entry.spellId,
+      name = entry.name or tostring(entry.spellId),
+      icon = entry.icon,
+    }
+    edit:SetText("")
+    control._reflowPills()
+    Commit()
+    return true
+  end
+
+  local function PickSuggestion(entry)
+    if not entry or Options.IsDisabled(opts) then
+      return
+    end
+    pickingSuggestion = true
+    CloseSuggest()
+    AddEntry(entry)
+    edit:SetFocus()
+    if C_Timer and C_Timer.After then
+      C_Timer.After(0, function()
+        pickingSuggestion = false
+      end)
+    else
+      pickingSuggestion = false
+    end
+  end
+
+  local function EnsureSuggestMenu()
+    if suggestMenu then
+      return
+    end
+    suggestCloser = CreateFrame("Button", nil, UIParent)
+    suggestCloser:SetAllPoints(UIParent)
+    suggestCloser:SetFrameStrata("FULLSCREEN_DIALOG")
+    suggestCloser:EnableMouse(true)
+    suggestCloser:Hide()
+    suggestCloser:SetScript("OnMouseDown", function()
+      if not pickingSuggestion then
+        CloseSuggest()
+      end
+    end)
+
+    suggestMenu = CreateFrame("Frame", nil, UIParent)
+    suggestMenu:SetFrameStrata("FULLSCREEN_DIALOG")
+    suggestMenu:SetFrameLevel(suggestCloser:GetFrameLevel() + 10)
+    suggestMenu:SetToplevel(true)
+    UI.StyleRounded(suggestMenu, C.windowBg, C.windowBorder, UI.Radius.window)
+    suggestMenu:Hide()
+    suggestMenu:EnableMouse(true)
+    suggestMenu:SetScript("OnHide", function()
+      suggestCloser:Hide()
+    end)
+
+    local scroll, content, bar = UI.CreateScrollFrame(suggestMenu)
+    -- Let clicks reach suggestion buttons (ScrollFrame mouse can eat them otherwise).
+    scroll:EnableMouse(false)
+    suggestMenu.scroll = scroll
+    suggestMenu.content = content
+    suggestMenu.bar = bar
+    scroll:SetPoint("TOPLEFT", suggestMenu, "TOPLEFT", PILL_MENU_PAD, -PILL_MENU_PAD)
+  end
+
+  local function OpenSuggest(matches)
+    EnsureSuggestMenu()
+    local shown = #matches
+    if shown == 0 then
+      CloseSuggest()
+      return
+    end
+
+    local width = max(box:GetWidth(), 180)
+    suggestMenu:SetWidth(width)
+    local needsBar = shown > PILL_MAX_VISIBLE_ROWS
+    local visible = needsBar and PILL_MAX_VISIBLE_ROWS or shown
+    local gutter = needsBar and PILL_BAR_GUTTER or 0
+    local scrollW = width - PILL_MENU_PAD * 2 - gutter
+    local listH = visible * PILL_SUGGEST_ITEM_H
+
+    suggestMenu.content:SetWidth(scrollW)
+    suggestMenu.scroll:SetWidth(scrollW)
+    suggestMenu.scroll:SetHeight(listH)
+    suggestMenu.bar:ClearAllPoints()
+    suggestMenu.bar:SetPoint("TOP", suggestMenu.scroll, "TOP", 0, 0)
+    suggestMenu.bar:SetPoint("BOTTOM", suggestMenu.scroll, "BOTTOM", 0, 0)
+    suggestMenu.bar:SetPoint("LEFT", suggestMenu.scroll, "RIGHT", 2, 0)
+
+    for i = 1, shown do
+      local item = suggestItems[i]
+      if not item then
+        item = CreateFrame("Button", nil, suggestMenu.content)
+        item:SetHeight(PILL_SUGGEST_ITEM_H)
+        local hl = item:CreateTexture(nil, "BACKGROUND")
+        hl:SetAllPoints(item)
+        hl:SetColorTexture(1, 1, 1, 0.09)
+        hl:Hide()
+        item.hl = hl
+        item.icon = item:CreateTexture(nil, "ARTWORK")
+        item.icon:SetSize(PILL_ICON_SIZE, PILL_ICON_SIZE)
+        item.icon:SetPoint("LEFT", item, "LEFT", 6, 0)
+        item.text = UI.CreateFontString(item, "OVERLAY", UI.Fonts.base, "GameFontHighlightSmall")
+        item.text:SetPoint("LEFT", item.icon, "RIGHT", 6, 0)
+        item.text:SetPoint("RIGHT", item, "RIGHT", -6, 0)
+        item.text:SetJustifyH("LEFT")
+        item.text:SetTextColor(C.text[1], C.text[2], C.text[3])
+        item:SetScript("OnEnter", function(self)
+          self.hl:Show()
+        end)
+        item:SetScript("OnLeave", function(self)
+          self.hl:Hide()
+        end)
+        -- OnMouseDown beats EditBox focus-loss closing the menu before OnClick.
+        item:SetScript("OnMouseDown", function(self)
+          if self.entry then
+            PickSuggestion(self.entry)
+          end
+        end)
+        suggestItems[i] = item
+      end
+      local m = matches[i]
+      item.entry = m
+      item.text:SetText(m.name or m.token)
+      if m.icon then
+        item.icon:SetTexture(m.icon)
+        item.icon:Show()
+        item.text:ClearAllPoints()
+        item.text:SetPoint("LEFT", item.icon, "RIGHT", 6, 0)
+        item.text:SetPoint("RIGHT", item, "RIGHT", -6, 0)
+      else
+        item.icon:Hide()
+        item.text:ClearAllPoints()
+        item.text:SetPoint("LEFT", item, "LEFT", 8, 0)
+        item.text:SetPoint("RIGHT", item, "RIGHT", -6, 0)
+      end
+      item:ClearAllPoints()
+      item:SetPoint("TOPLEFT", suggestMenu.content, "TOPLEFT", 0, -(i - 1) * PILL_SUGGEST_ITEM_H)
+      item:SetPoint("TOPRIGHT", suggestMenu.content, "TOPRIGHT", 0, -(i - 1) * PILL_SUGGEST_ITEM_H)
+      item:Show()
+    end
+    for i = shown + 1, #suggestItems do
+      suggestItems[i]:Hide()
+    end
+
+    suggestMenu.content:SetHeight(max(shown * PILL_SUGGEST_ITEM_H, 1))
+    suggestMenu.scroll:SetVerticalScroll(0)
+    if suggestMenu.scroll.cmUpdate then
+      suggestMenu.scroll.cmUpdate()
+    end
+
+    suggestMenu:SetHeight(PILL_MENU_PAD * 2 + listH)
+    suggestMenu:ClearAllPoints()
+    suggestMenu:SetPoint("TOPLEFT", box, "BOTTOMLEFT", 0, -2)
+    suggestCloser:Show()
+    suggestMenu:Show()
+    suggestMenu:Raise()
+  end
+
+  local function RefreshSuggestions()
+    if Options.IsDisabled(opts) or not edit:HasFocus() then
+      CloseSuggest()
+      return
+    end
+    local ids, names = SelectedMaps()
+    local matches = resolver.filterSuggestions(edit:GetText(), ids, names)
+    OpenSuggest(matches)
+  end
+
+  local function ScheduleSuggest()
+    debounceToken = debounceToken + 1
+    local token = debounceToken
+    if C_Timer and C_Timer.After then
+      C_Timer.After(PILL_DEBOUNCE_S, function()
+        if token == debounceToken then
+          RefreshSuggestions()
+        end
+      end)
+    else
+      RefreshSuggestions()
+    end
+  end
+
+  edit:SetScript("OnTextChanged", function(_, userInput)
+    if userInput then
+      ScheduleSuggest()
+    end
+  end)
+  edit:SetScript("OnEditFocusGained", function()
+    ScheduleSuggest()
+  end)
+  edit:SetScript("OnEditFocusLost", function()
+    -- Delay so suggestion OnMouseDown can set pickingSuggestion first.
+    if C_Timer and C_Timer.After then
+      C_Timer.After(0.05, function()
+        if pickingSuggestion or edit:HasFocus() then
+          return
+        end
+        CloseSuggest()
+        -- Clicking away dismisses suggestions only -- never auto-add a partial match.
+        edit:SetText("")
+      end)
+    elseif not pickingSuggestion then
+      CloseSuggest()
+      edit:SetText("")
+    end
+  end)
+  edit:SetScript("OnEscapePressed", function(self)
+    if suggestMenu and suggestMenu:IsShown() then
+      CloseSuggest()
+    else
+      self:ClearFocus()
+    end
+  end)
+  edit:SetScript("OnEnterPressed", function(self)
+    local ids, names = SelectedMaps()
+    local matches = resolver.filterSuggestions(self:GetText(), ids, names)
+    if matches[1] then
+      PickSuggestion(matches[1])
+    else
+      local leftover = strtrim(self:GetText() or "")
+      if leftover ~= "" then
+        local entry = resolver.resolveToken(leftover)
+        if entry and entry.spellId then
+          PickSuggestion(entry)
+        end
+      else
+        CloseSuggest()
+      end
+    end
+  end)
+  edit:SetScript("OnKeyDown", function(self)
+    -- Must run inside OnKeyDown on Mainline or movement binds (W/A/S/D) still fire.
+    if self.SetPropagateKeyboardInput then
+      self:SetPropagateKeyboardInput(false)
+    end
+  end)
+
+  box:SetScript("OnMouseDown", function()
+    if not Options.IsDisabled(opts) then
+      edit:SetFocus()
+    end
+  end)
+
+  function control.Refresh()
+    if edit:HasFocus() then
+      return
+    end
+    suppressCommit = true
+    local raw = (opts.get and opts.get()) or ""
+    entries = ParseCsvToEntries(raw)
+    control._reflowPills()
+    -- Migrate legacy name tokens → ID CSV when the options UI loads the control.
+    local normalized = EntriesToCsv(entries)
+    if opts.set and strtrim(raw) ~= normalized then
+      opts.set(normalized)
+    end
+    suppressCommit = false
+    local disabled = Options.IsDisabled(opts)
+    if edit.SetEnabled then
+      edit:SetEnabled(not disabled)
+    end
+    box:SetAlpha(disabled and (C.disabledAlpha or 0.5) or 1)
+    if row.label then
+      row.label:SetAlpha(disabled and (C.disabledAlpha or 0.5) or 1)
+    end
+    if disabled then
+      CloseSuggest()
+    end
+  end
+
+  -- After width is known, reflow pills inside the box.
+  Options.AttachOptionText(control, row, opts, PILL_BOX_H)
+  local prevSetWidthTo = control.SetWidthTo
+  function control.SetWidthTo(width)
+    if prevSetWidthTo then
+      prevSetWidthTo(width)
+    end
+    LayoutPills()
+    return control.height
+  end
+
+  Options.AddRowHover(row, opts, box, edit)
+  control._reflowPills()
+  return Options.RegisterControl(control)
+end

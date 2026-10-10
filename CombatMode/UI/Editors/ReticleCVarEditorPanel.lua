@@ -1,0 +1,688 @@
+---------------------------------------------------------------------------------------
+--  UI/Editors/ReticleCVarEditorPanel.lua — EDITOR — reticle CVar editor window
+---------------------------------------------------------------------------------------
+--  What it does: Standalone editor UI (CM.OpenReticleTargetingCVarEditor) for per-account
+--  reticle CVar overrides. Live-refreshes on CVAR_UPDATE and attributes SetCVar sources
+--  via hooksecurefunc so rows show Combat Mode vs external writers.
+--  Architecture / how it works:
+--    • Combat-guarded open/create; uses CM.UI CreateWindow toolkit.
+--    • Ignores stack frames from this panel and CVarManager when attributing sources.
+--    • Writes go through ReticleCVarEditorData → overrides → CVarManager apply path.
+--  Does not: Own override storage schema (DB + CVarManager) or Reticle Targeting toggles.
+--  Related: UI/Editors/ReticleCVarEditorData.lua, Core/Runtime/CVarManager.lua,
+--  UI/Options/Tabs/TabReticleTargeting.lua, UI/Options/Draw.lua,
+--  UI/Options/OptionsPanel.lua
+---------------------------------------------------------------------------------------
+local _, addonNS = ...
+local CM = addonNS.CombatMode
+local _G = _G
+
+-- WoW API
+local CreateFrame = _G.CreateFrame
+local C_CVar = _G.C_CVar
+local C_Timer = _G.C_Timer
+local debugstack = _G.debugstack
+local GetTime = _G.GetTime
+local hooksecurefunc = _G.hooksecurefunc
+local ipairs = _G.ipairs
+local strfind = _G.strfind
+local strlower = _G.strlower
+local strupper = _G.strupper
+local tonumber = _G.tonumber
+
+local UI = CM.UI
+local C = UI.Colors
+
+local Data = CM.ReticleCVarEditorData
+local Editor = CM.ReticleCVarEditor or {}
+CM.ReticleCVarEditor = Editor
+Editor.modifiedBy = Editor.modifiedBy or {}
+--- Set when TraceCVarSource runs from C_CVar.SetCVar / ConsoleExec so CVAR_UPDATE can avoid overwriting attribution.
+local reticleCVarSeenFromHook = {}
+local pendingExternalUpdate = {}
+local refreshQueued = false
+
+local function IsIgnoredSource(source)
+  local normalized = strlower(source or "")
+  -- Skip editor chrome, CVarManager (always on the stack for CM.SetCVar), and Blizzard wrappers.
+  -- Prefer ReticleCVarEditorData.lua (or other callers) so saves attribute to Combat Mode.
+  return strfind(normalized, "[\\/]combatmode[\\/]ui[\\/]editors[\\/]reticlecvareditorpanel%.lua")
+    or strfind(normalized, "[\\/]combatmode[\\/]core[\\/]runtime[\\/]cvarmanager%.lua")
+    or strfind(normalized, "[_\\/]sharedxmlbase[\\/]cvarutil%.lua")
+    or strfind(normalized, "[_\\/]sharedxml[\\/]cvarutil%.lua")
+end
+
+local function FormatModifiedBy(source, lineNum)
+  local normalized = strlower(source or "")
+  if strfind(normalized, "[\\/]combatmode[\\/]") then
+    if strfind(normalized, "reticlecvareditor") then
+      return "Combat Mode (Reticle CVar Editor)"
+    end
+    return "Combat Mode"
+  end
+  return source .. ":" .. lineNum
+end
+
+local function FindBestSourceFromTrace(trace)
+  if not trace or trace == "" then
+    return nil, nil
+  end
+
+  -- Prefer file:line entries in order, skipping wrappers/internal files.
+  for source, lineNum in trace:gmatch('"@([^"]+)"%]:(%d+)') do
+    if not IsIgnoredSource(source) then
+      return source, lineNum
+    end
+  end
+
+  -- Fallback for alternate stack format.
+  for source, lineNum in trace:gmatch("in function <([^:%[>]+):(%d+)>") do
+    if not IsIgnoredSource(source) then
+      return source, lineNum
+    end
+  end
+
+  return nil, nil
+end
+
+local function TraceCVarSource(cvar)
+  local canonicalCVar = Data.CanonicalCVar(cvar)
+  if not canonicalCVar then
+    return
+  end
+
+  -- Wide stack: hooks sit above the real caller; need enough frames to reach addon code.
+  local trace = ""
+  if debugstack then
+    trace = debugstack(2, 50, 50) or debugstack(3) or ""
+  end
+  local source, lineNum = FindBestSourceFromTrace(trace)
+  local key = strlower(canonicalCVar)
+  if source then
+    Editor.modifiedBy[key] = FormatModifiedBy(source, lineNum)
+  else
+    -- Hook fired with only ignored frames (CM.SetCVar path fully inside Combat Mode).
+    Editor.modifiedBy[key] = "Combat Mode"
+  end
+  reticleCVarSeenFromHook[key] = true
+end
+
+function Editor.RequestRefresh()
+  if refreshQueued then
+    return
+  end
+  refreshQueued = true
+  if not (C_Timer and C_Timer.After) then
+    refreshQueued = false
+    Editor.Refresh()
+    return
+  end
+  C_Timer.After(0, function()
+    refreshQueued = false
+    for key in pairs(pendingExternalUpdate) do
+      if not reticleCVarSeenFromHook[key] then
+        Editor.modifiedBy[key] = "External change (CVAR_UPDATE)"
+      end
+      pendingExternalUpdate[key] = nil
+      reticleCVarSeenFromHook[key] = nil
+    end
+    Editor.Refresh()
+  end)
+end
+
+local function NormalizeSortText(str)
+  str = str or ""
+  str = str:gsub("|c........", ""):gsub("|r", "")
+  return str:lower()
+end
+
+local function BuildListFrame(parent, width, height)
+  local frame = CreateFrame("Frame", nil, parent)
+  frame:SetSize(width, height)
+  UI.StyleRounded(frame, C.inputBg, C.cardBorder, UI.Radius.card)
+  frame:SetFrameStrata(parent:GetFrameStrata())
+  frame:SetFrameLevel(parent:GetFrameLevel() + 2)
+  frame.itemHeight = 18
+  frame.rowPad = 4 -- top inset inside clip; bottom uses leftover (clipped if needed)
+  frame.minValue = 0
+  frame.value = 0
+  frame.items = {}
+  frame.rows = {}
+  frame.sortColumn = 1
+  frame.sortAscending = true
+
+  -- Rows live in a clipped inset so overflow never paints past the rounded list chrome.
+  -- Headers stay on `frame` (anchored above TOP) and must not be under SetClipsChildren.
+  local clip = CreateFrame("Frame", nil, frame)
+  clip:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -1)
+  clip:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -22, 1)
+  clip:SetClipsChildren(true)
+  frame.clip = clip
+
+  local function VisibleRowCount(listHeight)
+    local clipH = listHeight or (clip:GetHeight() or 0)
+    if clipH < 1 then
+      clipH = (frame:GetHeight() or 0) - 2
+    end
+    return math.max(1, math.floor((clipH - frame.rowPad) / frame.itemHeight))
+  end
+  frame.VisibleRowCount = VisibleRowCount
+
+  local cols = {
+    { "CVar", 180, "LEFT" },
+    { "Description", 405, "LEFT" },
+    { "Value", 60, "RIGHT" },
+  }
+  frame.columns = cols
+
+  local headerButtons = {}
+  local x = 8
+  for index, col in ipairs(cols) do
+    local button = CreateFrame("Button", nil, frame)
+    button:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", x, 0)
+    button:SetSize(col[2], 18)
+    button:SetNormalFontObject("GameFontHighlightSmallLeft")
+    button:SetHighlightFontObject("GameFontNormalSmallLeft")
+    button:SetText(col[1])
+    local fs = button:GetFontString()
+    fs:SetAllPoints()
+    fs:SetJustifyH(col[3])
+    UI.SetFontSize(fs, UI.Fonts.base, "GameFontHighlightSmallLeft")
+    fs:SetTextColor(C.textDim[1], C.textDim[2], C.textDim[3])
+    button:SetScript("OnClick", function()
+      if frame.sortColumn == index then
+        frame.sortAscending = not frame.sortAscending
+      else
+        frame.sortColumn = index
+        frame.sortAscending = true
+      end
+      frame:SortAndUpdate()
+    end)
+    headerButtons[index] = button
+    x = x + col[2] + 4
+  end
+  frame.headerButtons = headerButtons
+
+  local scrollbar = UI.CreateVerticalSlider(frame)
+  scrollbar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -6)
+  scrollbar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -5, 6)
+  scrollbar:SetMinMaxValues(0, 0)
+  scrollbar:SetValueStep(1)
+  frame.scrollbar = scrollbar
+
+  local function UpdateRows()
+    local visibleRows = frame.visibleRows or 0
+    for i = 1, visibleRows do
+      local itemIndex = i + frame.value
+      local row = frame.rows[i]
+      local wasMouseOver = row:IsMouseOver()
+      if wasMouseOver then
+        local onLeave = row:GetScript("OnLeave")
+        if onLeave then
+          onLeave(row)
+        end
+      end
+      local item = frame.items[itemIndex]
+      if item then
+        row.value = item.key
+        row.cvar = item.cvarText
+        row.description = item.descText
+        row.displayValue = item.valueTextRaw
+        row.cols[1]:SetText(item.cvarText)
+        row.cols[2]:SetText(item.descText)
+        row.cols[3]:SetText(item.valueText)
+        row:Show()
+      else
+        row.value = nil
+        row:Hide()
+      end
+      if wasMouseOver and row:IsShown() then
+        local onEnter = row:GetScript("OnEnter")
+        if onEnter then
+          onEnter(row)
+        end
+      end
+    end
+  end
+
+  frame.UpdateRows = UpdateRows
+
+  function frame:SortAndUpdate()
+    local column = self.sortColumn
+    local ascending = self.sortAscending
+    table.sort(self.items, function(a, b)
+      local av = NormalizeSortText(a.sortable[column])
+      local bv = NormalizeSortText(b.sortable[column])
+      if av == bv then
+        return a.key < b.key
+      end
+      if ascending then
+        return av < bv
+      end
+      return av > bv
+    end)
+    self:UpdateRows()
+  end
+
+  function frame:SetItems(items)
+    self.items = items or {}
+    self.visibleRows = VisibleRowCount()
+    if self.EnsureRows then
+      self:EnsureRows(self.visibleRows)
+    end
+    self.maxValue = math.max(#self.items - self.visibleRows, 0)
+    if self.value > self.maxValue then
+      self.value = self.maxValue
+    end
+    self.scrollbar:SetMinMaxValues(0, self.maxValue)
+    self.scrollbar:SetValue(self.value)
+    self:SortAndUpdate()
+  end
+
+  frame:EnableMouseWheel(true)
+  frame:SetScript("OnMouseWheel", function(self, delta)
+    if self.scrollbar.cmScrollBy then
+      self.scrollbar:cmScrollBy(-delta, false)
+      return
+    end
+    if delta > 0 then
+      self.value = math.max(0, self.value - 1)
+    else
+      self.value = math.min(self.maxValue, self.value + 1)
+    end
+    self.scrollbar:SetValue(self.value)
+    self:UpdateRows()
+  end)
+
+  -- Window height sync (secondary editors) can shrink this list after the first SetItems;
+  -- recompute visible rows so we never keep overflow rows shown.
+  frame:SetScript("OnSizeChanged", function(self, _, h)
+    if not self.items or (h or 0) < 1 then
+      return
+    end
+    local nextVisible = VisibleRowCount((h or self:GetHeight()) - 2)
+    if nextVisible == self.visibleRows then
+      return
+    end
+    self:SetItems(self.items)
+  end)
+
+  scrollbar:SetScript("OnValueChanged", function(_, value)
+    frame.value = math.floor(value)
+    frame:UpdateRows()
+  end)
+
+  local lastClickTime = 0
+
+  local function CreateRow(rowIndex)
+    local row = CreateFrame("Frame", nil, clip)
+    row:SetWidth(width - 34)
+    row:SetHeight(frame.itemHeight)
+    row:EnableMouse(true)
+    if rowIndex == 1 then
+      row:SetPoint("TOPLEFT", clip, "TOPLEFT", 7, -frame.rowPad)
+    else
+      row:SetPoint("TOPLEFT", frame.rows[rowIndex - 1], "BOTTOMLEFT", 0, 0)
+    end
+
+    local bg = row:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(1, 1, 1, 0.1)
+    bg:Hide()
+    row.bg = bg
+
+    row.cols = {}
+    local xOffset = 0
+    for colIndex, col in ipairs(cols) do
+      local fs = UI.CreateFontString(row, "OVERLAY", UI.Fonts.base, "GameFontHighlightSmallLeft")
+      fs:SetPoint("LEFT", xOffset, 0)
+      fs:SetWidth(col[2])
+      fs:SetWordWrap(false)
+      fs:SetMaxLines(1)
+      fs:SetJustifyH(col[3])
+      row.cols[colIndex] = fs
+      xOffset = xOffset + col[2] + 4
+    end
+
+    row:SetScript("OnEnter", function(self)
+      if not self.value then
+        return
+      end
+      self.bg:Show()
+      local rowData = Editor.rowDataByKey and Editor.rowDataByKey[self.value]
+      if not rowData then
+        return
+      end
+      local lines = {
+        { label = "Default Value:", value = rowData.defaultValue },
+      }
+      local modifiedBy = Editor.modifiedBy[strlower(rowData.cvar)]
+      if modifiedBy then
+        lines[#lines + 1] = { label = "Last Modified By:", value = modifiedBy, kind = "warn" }
+      end
+      UI.ShowTooltip(self, {
+        title = rowData.cvar,
+        text = rowData.description ~= "" and rowData.description or nil,
+        lines = lines,
+      }, "ANCHOR_TOPLEFT")
+    end)
+    row:SetScript("OnLeave", function(self)
+      self.bg:Hide()
+      UI.HideTooltip()
+    end)
+    row:SetScript("OnMouseDown", function(self)
+      if not self.value then
+        return
+      end
+      local now = GetTime()
+      if now - lastClickTime <= 0.25 then
+        Editor.ShowInlineEditor(self)
+      else
+        lastClickTime = now
+      end
+    end)
+
+    return row
+  end
+
+  function frame:EnsureRows(count)
+    local existing = #self.rows
+    for i = existing + 1, count do
+      self.rows[i] = CreateRow(i)
+    end
+    for i = count + 1, existing do
+      local row = self.rows[i]
+      if row then
+        row.value = nil
+        row:Hide()
+      end
+    end
+  end
+
+  return frame
+end
+
+local function LiteralizePattern(str)
+  return str:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1")
+end
+
+local function MakeCaseInsensitivePattern(text)
+  return LiteralizePattern(text):gsub("%a", function(c)
+    return "[" .. strlower(c) .. strupper(c) .. "]"
+  end)
+end
+
+--- True when live GetCVar differs from `CM.Constants.ReticleTargetingCVarValues` for this row.
+local function LiveCVarDiffersFromCombatModePreset(currentStr, presetStr)
+  local cur, preset = tonumber(currentStr), tonumber(presetStr)
+  if cur ~= nil and preset ~= nil then
+    return cur ~= preset
+  end
+  return (currentStr or "") ~= (presetStr or "")
+end
+
+local function BuildDisplayRows(filterText)
+  local rows = Data.GetRows()
+  local pattern = nil
+  local listItems = {}
+  local rowDataByKey = {}
+
+  if filterText and filterText ~= "" then
+    pattern = MakeCaseInsensitivePattern(filterText)
+  end
+
+  for _, row in ipairs(rows) do
+    local cvarText = row.cvar
+    local descText = row.description
+    local valueTextRaw = row.currentValue
+    local valueText = row.currentValue
+    local isOutOfSync = LiveCVarDiffersFromCombatModePreset(row.currentValue, row.defaultValue)
+    if isOutOfSync then
+      valueText = UI.AccentWrap(row.currentValue)
+    end
+
+    local include = true
+    if pattern then
+      include = cvarText:find(pattern) or descText:find(pattern) or valueTextRaw:find(pattern)
+    end
+
+    if include then
+      if pattern then
+        local mark = UI.AccentMarkup()
+        cvarText = cvarText:gsub(pattern, mark .. "%1|r")
+        descText = descText:gsub(pattern, mark .. "%1|r")
+        valueText = valueText:gsub(pattern, mark .. "%1|r")
+      end
+      local key = row.cvar
+      listItems[#listItems + 1] = {
+        key = key,
+        sortable = { row.cvar, row.description, row.currentValue },
+        cvarText = cvarText,
+        descText = descText,
+        valueText = valueText,
+        valueTextRaw = valueTextRaw,
+      }
+      rowDataByKey[key] = row
+    end
+  end
+
+  return listItems, rowDataByKey
+end
+
+function Editor.Refresh()
+  if not Editor.frame then
+    return
+  end
+  local filterText = Editor.filterBox:GetText() or ""
+  local items, rowDataByKey = BuildDisplayRows(filterText)
+  Editor.rowDataByKey = rowDataByKey
+  Editor.listFrame:SetItems(items)
+end
+
+function Editor.ShowInlineEditor(row)
+  if not row or not row.value then
+    return
+  end
+
+  if _G.InCombatLockdown() then
+    print(
+      CM.Constants.BasePrintMsg
+        .. "|cff909090: cannot edit Reticle Targeting CVars while in combat.|r"
+    )
+    return
+  end
+
+  local input = Editor.inlineInput
+  local blocker = Editor.inlineBlocker
+  if input.currentLabel then
+    input.currentLabel:Show()
+  end
+  row.cols[3]:Hide()
+  input.currentLabel = row.cols[3]
+  input.currentKey = row.value
+  input:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+  input:SetText(row.displayValue or "")
+  input:HighlightText()
+  blocker:Show()
+  input:Show()
+  input:SetFocus()
+end
+
+function CM.OpenReticleTargetingCVarEditor()
+  if not Editor.frame then
+    local frame = UI.CreateBareWindow(
+      "CombatModeReticleCVarEditor",
+      CM.METADATA["TITLE"] .. " - Reticle Targeting CVar Editor",
+      735,
+      UI.GetSecondaryEditorHeight()
+    )
+    frame:Hide()
+
+    local subtitle = UI.CreateFontString(frame, "ARTWORK", UI.Fonts.base, "GameFontHighlight")
+    subtitle:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -44)
+    subtitle:SetPoint("RIGHT", frame, "RIGHT", -40, 0)
+    subtitle:SetJustifyH("LEFT")
+    subtitle:SetText(
+      "Double-click a row to edit. Overrides are account-wide and replace CombatMode defaults."
+    )
+    subtitle:SetTextColor(C.textDim[1], C.textDim[2], C.textDim[3])
+
+    local filterBox = CreateFrame("EditBox", nil, frame)
+    filterBox:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -12)
+    filterBox:SetPoint("RIGHT", frame, "RIGHT", -16, 0)
+    filterBox:SetHeight(24)
+    filterBox:SetAutoFocus(false)
+    UI.SetEditBoxFont(filterBox)
+    filterBox:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
+    filterBox:SetTextInsets(8, 8, 0, 0)
+    filterBox:SetMaxLetters(120)
+    UI.StyleRounded(filterBox, C.inputBg, C.cardBorder, UI.Radius.control)
+    filterBox:SetScript("OnEscapePressed", function(self)
+      self:ClearFocus()
+    end)
+    filterBox:SetScript("OnEnterPressed", function(self)
+      self:ClearFocus()
+    end)
+    filterBox:SetScript("OnTextChanged", function()
+      Editor.RequestRefresh()
+    end)
+
+    local listFrame = BuildListFrame(frame, 700, 300)
+    listFrame:SetPoint("TOP", filterBox, "BOTTOM", 0, -28)
+    listFrame:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 16, 46)
+
+    local resetControl = UI.MakeButton(frame, {
+      label = "Reset to Defaults",
+      pixelWidth = 260,
+      func = function()
+        if Data.ClearAllOverrides() then
+          Editor.Refresh()
+        end
+      end,
+    })
+    local resetRow = resetControl.frame
+    resetRow:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -20, 12)
+    resetRow:SetSize(260, resetControl.height or 24)
+    -- List uses frame level parent+2; without this, the list steals clicks on most of the button.
+    local clickLevel = listFrame:GetFrameLevel() + 20
+    resetRow:SetFrameLevel(clickLevel)
+    if resetControl.button then
+      resetControl.button:SetFrameLevel(clickLevel + 1)
+    end
+
+    local blocker = CreateFrame("Frame", nil, listFrame)
+    blocker:SetAllPoints()
+    blocker:EnableMouse(true)
+    blocker:EnableMouseWheel(true)
+    blocker:SetScript("OnMouseDown", function()
+      Editor.inlineInput:ClearFocus()
+    end)
+    blocker:SetScript("OnMouseWheel", function() end)
+    local blackout = blocker:CreateTexture(nil, "BACKGROUND")
+    blackout:SetAllPoints()
+    blackout:SetColorTexture(0, 0, 0, 0.35)
+    blocker:Hide()
+
+    local inlineInput = CreateFrame("EditBox", nil, blocker)
+    inlineInput:SetSize(60, 20)
+    inlineInput:SetAutoFocus(false)
+    UI.SetEditBoxFont(inlineInput)
+    inlineInput:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
+    inlineInput:SetJustifyH("RIGHT")
+    inlineInput:SetTextInsets(5, 8, 0, 0)
+    UI.StyleRounded(inlineInput, C.inputBg, C.accent, UI.Radius.control)
+    inlineInput:Hide()
+    inlineInput:SetScript("OnEscapePressed", function(self)
+      self:ClearFocus()
+      self:Hide()
+    end)
+    inlineInput:SetScript("OnEnterPressed", function(self)
+      if Data.SetOverride(self.currentKey, self:GetText() or "") then
+        self:Hide()
+        Editor.Refresh()
+      end
+    end)
+    inlineInput:SetScript("OnEditFocusLost", function(self)
+      self:Hide()
+    end)
+    inlineInput:SetScript("OnHide", function(self)
+      blocker:Hide()
+      if self.currentLabel then
+        self.currentLabel:Show()
+      end
+    end)
+
+    frame:SetScript("OnShow", function()
+      Editor.RequestRefresh()
+    end)
+
+    Editor.frame = frame
+    Editor.filterBox = filterBox
+    Editor.listFrame = listFrame
+    Editor.inlineInput = inlineInput
+    Editor.inlineBlocker = blocker
+  end
+
+  Editor.frame:SetHeight(UI.GetSecondaryEditorHeight())
+  Editor.frame:Show()
+  Editor.frame:Raise()
+
+  -- Anchor to the right of the main options window when it is open (same as the
+  -- Targeting Macro Prelines editor).
+  do
+    local frame = Editor.frame
+    local anchor = CM.GetOptionsFrame and CM.GetOptionsFrame()
+    frame:ClearAllPoints()
+    if anchor and anchor:IsShown() then
+      frame:SetPoint("TOPLEFT", anchor, "TOPRIGHT", 12, 0)
+    else
+      frame:SetPoint("CENTER")
+    end
+  end
+end
+
+-- Trace only C_CVar.SetCVar: hooking global SetCVar as well would run second and overwrite attribution with a worse stack.
+if C_CVar and C_CVar.SetCVar then
+  hooksecurefunc(C_CVar, "SetCVar", function(cvar)
+    TraceCVarSource(cvar)
+    if Editor.frame and Editor.frame:IsVisible() then
+      Editor.RequestRefresh()
+    end
+  end)
+else
+  hooksecurefunc("SetCVar", function(cvar)
+    TraceCVarSource(cvar)
+    if Editor.frame and Editor.frame:IsVisible() then
+      Editor.RequestRefresh()
+    end
+  end)
+end
+
+hooksecurefunc("ConsoleExec", function(msg)
+  if type(msg) == "string" then
+    local cmd, cvar = msg:match("^(%S+)%s+(%S+)%s*(%S*)")
+    if cmd then
+      if strlower(cmd) == "set" then
+        TraceCVarSource(cvar)
+      else
+        TraceCVarSource(cmd)
+      end
+    end
+  end
+  if Editor.frame and Editor.frame:IsVisible() then
+    Editor.RequestRefresh()
+  end
+end)
+
+local cvarEventFrame = CreateFrame("Frame")
+cvarEventFrame:RegisterEvent("CVAR_UPDATE")
+cvarEventFrame:SetScript("OnEvent", function(_, _, cvarName)
+  local canonical = Data.CanonicalCVar(cvarName)
+  if not canonical then
+    return
+  end
+  if Editor.frame and Editor.frame:IsVisible() then
+    pendingExternalUpdate[strlower(canonical)] = true
+    Editor.RequestRefresh()
+  end
+end)

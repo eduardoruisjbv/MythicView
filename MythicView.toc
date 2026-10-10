@@ -1,12 +1,15 @@
 ## Interface: 120100
 ## Title: Mythic View
-## Notes: Contextual action camera with automatic competitive PvP camera for arenas and battlegrounds.
-## Notes-ptBR: Câmera contextual com modo competitivo automático para Arenas e Campos de Batalha.
+## Notes: Contextual action camera and integrated action-combat controls.
+## Notes-ptBR: Câmera contextual e controles de combate em estilo de ação integrados.
 ## Author: Eduardo Rui
-## Version: 1.1.0
+## Version: 1.2.0
+## X-Contributors: justice7ca, sampconrad
+## X-CombatMode-Upstream: https://github.com/djsmithdev/combatmode/tree/10bd846d1aec4b00b2f6f85df54414eb361e7902
 ## IconTexture: 1109100
 ## OptionalDeps: AzeriteUI5_JuNNeZ_Edition
 ## SavedVariables: MythicViewDB
 
 MythicView.lua
+CombatMode/Embeds.xml
 Options.lua
