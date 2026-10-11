@@ -523,7 +523,6 @@ local tune = {}
 local PROFILES = {}
 -- Keep PvP helpers on the addon namespace: Lua 5.1 caps chunk locals at 200.
 function ns.GetEffectivePresetID()
-  if not settings.actionCameraEnabled then return settings.preset end
   local _, instanceType = IsInInstance()
   if settings.autoPvpCamera and (instanceType == "arena" or instanceType == "pvp") then
     return "pvp"
@@ -1753,7 +1752,6 @@ local function GetFocusStrength()
 end
 
 local function UpdateTargetFocus(elapsed)
-  if not settings.actionCameraEnabled then return end
   local _, instanceType = IsInInstance()
   if tune.pvpFixed or instanceType == "pvp" or instanceType == "arena" then
     -- Do not leave even a fading target-follow active after entering PvP.
@@ -1803,7 +1801,6 @@ local function UpdateTargetFocus(elapsed)
 end
 
 local function SetLockOn(enabled)
-  if not settings.actionCameraEnabled then enabled = false end
   if enabled and tune.pvpFixed then enabled = false end
   enabled = enabled and HasHostileTarget() or false
   if enabled == lockOn then return end
@@ -1949,7 +1946,7 @@ function ns.ResetPvpCameraLayers()
 end
 
 ApplyCurrentProfile = function()
-  if taxiSuspended or not settings.actionCameraEnabled then return end
+  if taxiSuspended then return end
   local profileID, profile = SelectProfile()
   if profileID == "pvp" and activeProfile ~= "pvp" then
     ns.ResetPvpCameraLayers()
@@ -2112,32 +2109,22 @@ local function ApplySettings()
     lastPresetID = settings.preset
   end
   RebuildTuning()
-  if not settings.actionCameraEnabled then
-    local wasTaxiSuspended = taxiSuspended
-    taxiSuspended = false
-    lockOn, aiming = false, false
-    ns.ResetPvpCameraLayers()
-    if cameraControlsActive and not wasTaxiSuspended then RestoreCameraSettings() end
-    cameraControlsActive = false
-    cam.ready = false
-    transition = nil
-    activeProfile = nil
-    cam.focusYaw, cam.focusYawVelocity = 0, 0
-    cam.focusPitch, cam.focusPitchVelocity = 0, 0
-    ResetFrameCVarCache()
-  else
-    if not cameraControlsActive then
-      SaveCameraSettings(true)
-      cameraControlsActive = true
-      ApplyCameraOverrides()
-      justEnabled = true
-    elseif not taxiSuspended then
-      ApplyEngineSettings()
-    end
+  if not cameraControlsActive then
+    -- Action Combat controls only persistent mouse-look. The Mythic View
+    -- profile camera remains active whether that style is enabled or not.
+    SaveCameraSettings()
+    cameraControlsActive = true
+    ApplyCameraOverrides()
+    justEnabled = true
+  elseif not taxiSuspended then
+    ApplyEngineSettings()
   end
-  if (cam.ready or justEnabled) and settings.actionCameraEnabled and not taxiSuspended then
+  if (cam.ready or justEnabled) and not taxiSuspended then
     activeProfile = nil
     ApplyCurrentProfile()
+  end
+  if ns.CombatMode and ns.CombatMode.SetMythicViewActionCameraEnabled then
+    ns.CombatMode.SetMythicViewActionCameraEnabled(settings.actionCameraEnabled)
   end
 end
 
@@ -2270,7 +2257,6 @@ frame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 frame:RegisterEvent("PLAYER_LOGOUT")
 frame:SetScript("OnEvent", function(_, event, unit, ...)
   if event == "UNIT_COMBAT" then
-    if not settings.actionCameraEnabled then return end
     -- High-frequency on a raid boss target: keep this path allocation-free.
     OnUnitCombat(unit, ...)
     return
@@ -2279,7 +2265,6 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     if ns.RefreshTargetSize then ns.RefreshTargetSize("target") end
     return
   elseif event == "UNIT_SPELLCAST_START" then
-    if not settings.actionCameraEnabled then return end
     local castGUID = ...
     if IsReadableString(castGUID) then
       castStartTime, castStartGUID = GetTime(), castGUID
@@ -2287,26 +2272,16 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     aiming = true
     return
   elseif event == "UNIT_SPELLCAST_CHANNEL_START" then
-    if not settings.actionCameraEnabled then return end
     aiming = true
     return
   elseif event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_FAILED"
       or event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
-    if not settings.actionCameraEnabled then return end
     aiming = false
     return
   elseif event == "PLAYER_LOGIN" then
     MythicViewDB = MythicViewDB or {}
-    local previousCameraWasActive = MythicViewDB.cameraActiveAtLogout ~= false
     LoadSettings()
     SaveCameraSettings()
-    if not settings.actionCameraEnabled and previousCameraWasActive then
-      RestoreCameraSettings()
-    elseif settings.actionCameraEnabled then
-      cameraControlsActive = true
-      SetCVar("CameraKeepCharacterCentered", "0", "MythicView")
-      SetCVar("CameraReduceUnexpectedMovement", "0", "MythicView")
-    end
     ApplySettings()
     SuppressActionCamWarning()
     if ns.BuildOptions then
@@ -2324,7 +2299,7 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     C_Timer.After(1.50, ApplyAzeriteCinematicPreset)
     return
   elseif event == "PLAYER_LOGOUT" then
-    MythicViewDB.cameraActiveAtLogout = settings.actionCameraEnabled
+    MythicViewDB.cameraActiveAtLogout = cameraControlsActive
     -- Keep a clean, confirmed baseline in SavedVariables. Do not clear it:
     -- the next client session may end without PLAYER_LOGOUT being delivered.
     if cameraControlsActive then
@@ -2358,8 +2333,6 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     end
     return
   end
-
-  if not settings.actionCameraEnabled then return end
 
   if taxiSuspended then return end
 
@@ -2408,10 +2381,6 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
 end)
 
 frame:SetScript("OnUpdate", function(_, elapsed)
-  if not settings.actionCameraEnabled then
-    pollElapsed, motionUpdateElapsed, cameraUpdateElapsed = 0, 0, 0
-    return
-  end
   pollElapsed = pollElapsed + elapsed
   if taxiSuspended then
     if pollElapsed >= PROFILE_POLL_INTERVAL then

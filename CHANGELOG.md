@@ -1,5 +1,11 @@
 # Mythic View — Changelog
 
+## 3.2.1 — Hotfix: camera profile control (2026-10-11)
+
+- Separated Action Combat's persistent mouse-look from Mythic View's camera profiles.
+- Disabling Action Combat now restores cursor and right-mouse camera control while selected styles, contextual profiles, framing, and effects continue to work.
+- Re-enabling Action Combat resumes persistent mouse-look without resetting the selected camera style.
+
 ## 3.2.0 — Impact feedback and contextual framing (2026-10-11)
 
 - Released optional direct-hit camera feedback with curated damage classification, plus cached target-size framing by map and creature.

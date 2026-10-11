@@ -1,5 +1,11 @@
 # Mythic View — Changelog
 
+## 3.2.1 — Hotfix: controle dos perfis de câmera (2026-10-11)
+
+- Separado o mouse-look persistente do Action Combat dos perfis de câmera do Mythic View.
+- Desativar o Action Combat agora devolve o controle ao cursor e ao botão direito, mantendo ativos o estilo selecionado, os perfis contextuais, o enquadramento e os efeitos.
+- Reativar o Action Combat retoma o mouse-look persistente sem redefinir o estilo de câmera selecionado.
+
 ## 3.2.0 — Impacto e enquadramento contextual (2026-10-11)
 
 - Lançado o feedback opcional de câmera para golpes diretos classificados e o enquadramento do alvo com cache por mapa e criatura.

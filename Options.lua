@@ -388,8 +388,8 @@ function ns.BuildOptions()
     end
     return container:GetData()
   end, "Changes the camera distance, framing, pacing, and overall intensity.")
-  Checkbox("actionCameraEnabled", "Use Mythic View camera (Action Combat style)",
-    "When disabled, Mythic View restores your saved WoW camera settings and leaves camera control to the traditional WoW camera. Camera profiles, effects, and automatic PvP framing pause until re-enabled.", "optional")
+  Checkbox("actionCameraEnabled", "Use Action Combat mouse-look",
+    "When disabled, persistent mouse-look is released and camera control returns to the WoW cursor and right-mouse drag. Mythic View keeps applying your selected camera style, contextual profiles, framing, and effects.", "optional")
   Checkbox("autoPvpCamera", "Automatically use PvP camera in arenas and battlegrounds",
     "Temporarily switches to PvP Competitive in arenas and battlegrounds: fixed 90-degree FOV, maximum addon zoom, centered framing, and no dynamic camera effects. Restores your selected style when you leave.", "good")
   Percent("zoomScale", "Camera distance", 70, 150,

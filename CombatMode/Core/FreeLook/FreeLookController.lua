@@ -60,6 +60,7 @@ local string = _G.string
 
 -- INITIAL STATE VARIABLES
 local cmMouselookActive = false -- Tracks Combat Mode's own intentional mouselook. Used in conjunction with _G.IsMouselooking() to handle external mouselook properly.
+local mythicViewActionCameraEnabled = true -- Mythic View owns this switch when the two addons are integrated.
 -- Shoulder + vignette stay up through temp (hold) unlock; cleared only on permanent unlock.
 local mouseLookCameraChromeActive = false
 local FreeLookOverride = false -- Changes when Free Look state is modified through user input ("Toggle / Hold" keybind and "/cm" cmd)
@@ -262,6 +263,12 @@ local function HideTooltip(shouldHide)
 end
 
 function CM.ShouldFreeLookBeOff()
+  -- The Mythic View master switch returns camera control to WoW. Keep this
+  -- ahead of custom force-lock conditions so the cursor remains available.
+  if not mythicViewActionCameraEnabled then
+    return true
+  end
+
   return CM.Profile("FreeLook:ShouldBeOff", function()
     -- Force lock beats tap/hold unlock and the Auto Unlock custom condition only.
     -- Feign, pet battle, ground targeting, cinematics, frames, and mounts still unlock.
@@ -379,6 +386,9 @@ local function StartFreeLookFresh()
 end
 
 function CM.LockFreeLook()
+  if not mythicViewActionCameraEnabled then
+    return
+  end
   if IsMouselooking() then
     return
   end
@@ -407,6 +417,27 @@ function CM.UnlockFreeLook()
   end
 
   CM.DebugPrint("Free Look Disabled")
+end
+
+-- Mythic View calls this when its Action Combat camera switch changes. This
+-- pauses only persistent free-look; Combat Mode's other controls stay enabled.
+function CM.SetMythicViewActionCameraEnabled(enabled)
+  local wasEnabled = mythicViewActionCameraEnabled
+  mythicViewActionCameraEnabled = enabled ~= false
+  if wasEnabled == mythicViewActionCameraEnabled then
+    return
+  end
+
+  if mythicViewActionCameraEnabled then
+    -- Preserve a cursor unlock the player chose before re-enabling the camera.
+    if FreeLookOverride then
+      CM.UnlockFreeLook()
+    else
+      CM.LockFreeLook()
+    end
+  else
+    CM.UnlockFreeLook()
+  end
 end
 
 -- Called from AutoCursorUnlock while an OPie ring frame is visible.
