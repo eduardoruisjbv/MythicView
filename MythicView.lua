@@ -343,7 +343,7 @@ local TWO_PI = 2 * pi
 local PRESETS = {
   ragnarok = {
     name = "God of War Ragnarök",
-    description = "Tight over the right shoulder, with weighty impacts, hit-stop, and strong shake.",
+    description = "Close, right-shoulder framing with smooth transitions and a responsive view of combat.",
     foot = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
     group = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
     mount = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
@@ -353,92 +353,92 @@ local PRESETS = {
   },
   darksiders = {
     name = "Darksiders",
-    description = "Higher and farther back, with a centered character, exaggerated impacts, and strong target focus.",
-    foot = { zoomScale = 0.75, zoomAdd = 4.5, fovAdd = -6 },
+    description = "A more distant, nearly centered view with deliberate target framing and quick transitions.",
+    foot = { zoomScale = 0.75, zoomAdd = 3.5, fovAdd = -6 },
     group = { zoomScale = 1, zoomAdd = 1.0, fovAdd = -2 },
     mount = { zoomScale = 1, zoomAdd = 0, fovAdd = -2 },
-    shoulderScale = 0.12, timeScale = 0.85,
-    shake = 1.25, hitstop = 1.3, sway = 0.5, drag = 0.6, lead = 0.5, focus = 1.15,
-    aimOnCast = false, dynamicPitch = true,
+    shoulderScale = 0.18, timeScale = 0.95,
+    shake = 1.0, hitstop = 1.0, sway = 0.5, drag = 0.7, lead = 0.6, focus = 1.05,
+    aimOnCast = false, dynamicPitch = false,
   },
   horizon = {
     name = "Horizon Zero Dawn",
-    description = "Right-shoulder, mid-distance framing with fluid movement, sprint pull-back, and aim while casting.",
+    description = "A medium-distance shoulder view with fluid movement and a closer frame while casting.",
     foot = { zoomScale = 0.9, zoomAdd = 1.0, fovAdd = -2 },
     group = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
     mount = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
-    shoulderScale = 0.85, timeScale = 1.25,
-    shake = 0.6, hitstop = 0.5, sway = 0.7, drag = 1.4, lead = 1.3, focus = 0.8,
+    shoulderScale = 0.72, timeScale = 1.10,
+    shake = 0.6, hitstop = 0.5, sway = 0.7, drag = 1.1, lead = 1.0, focus = 0.8,
     aimOnCast = true, dynamicPitch = false,
   },
   spacemarine = {
     name = "Warhammer 40K: Space Marine",
-    description = "Wide shoulder offset and a low camera for a massive character, weighty transitions, sprint pull-back, and aim while casting.",
-    foot = { zoomScale = 0.9, zoomAdd = 2.0, fovAdd = 2 },
-    group = { zoomScale = 1, zoomAdd = 0.5, fovAdd = 1 },
+    description = "A broad shoulder view with a strong combat frame and a closer view while casting.",
+    foot = { zoomScale = 0.9, zoomAdd = 1.0, fovAdd = 0 },
+    group = { zoomScale = 1, zoomAdd = 0.5, fovAdd = 0 },
     mount = { zoomScale = 1, zoomAdd = 0, fovAdd = 0 },
-    shoulderScale = 1.15, timeScale = 1.10,
-    shake = 1.1, hitstop = 0.8, sway = 1.2, drag = 1.25, lead = 0.9, focus = 0.9,
+    shoulderScale = 1.10, mountShoulderScale = 0.85, timeScale = 1.10,
+    shake = 1.1, hitstop = 0.8, sway = 0.9, drag = 1.15, lead = 0.9, focus = 0.9,
     aimOnCast = true, dynamicPitch = false,
   },
   witcher = {
     name = "The Witcher 3",
-    description = "Higher and farther back, nearly centered, with slow, floaty movement and a downward view of the character.",
-    foot = { zoomScale = 0.8, zoomAdd = 3.5, fovAdd = -3 },
+    description = "A measured, mostly centered camera with separate distance shaping for travel and combat.",
+    foot = { zoomScale = 0.8, zoomAdd = 2.5, fovAdd = -3 },
     group = { zoomScale = 1, zoomAdd = 0.5, fovAdd = -1 },
     mount = { zoomScale = 1, zoomAdd = 1.0, fovAdd = -2 },
-    shoulderScale = 0.30, timeScale = 1.30,
-    shake = 0.5, hitstop = 0.4, sway = 0.6, drag = 0.8, lead = 0.7, focus = 0.9,
-    aimOnCast = false, dynamicPitch = true,
+    shoulderScale = 0.25, timeScale = 1.20,
+    shake = 0.45, hitstop = 0.35, sway = 0.5, drag = 0.85, lead = 0.65, focus = 0.9,
+    aimOnCast = false, dynamicPitch = false,
   },
   eldenring = {
     name = "Elden Ring",
-    description = "Mid-distance and nearly centered, with crisp transitions and strong enemy focus inspired by soulslike lock-on.",
-    foot = { zoomScale = 0.8, zoomAdd = 2.5, fovAdd = -2 },
+    description = "A measured, nearly centered view with crisp transitions and restrained target framing.",
+    foot = { zoomScale = 0.9, zoomAdd = 3.0, fovAdd = -2 },
     group = { zoomScale = 1, zoomAdd = 0.5, fovAdd = -1 },
     mount = { zoomScale = 1, zoomAdd = 1.5, fovAdd = -1 },
-    shoulderScale = 0.20, timeScale = 0.90,
-    shake = 0.9, hitstop = 1.1, sway = 0.6, drag = 0.7, lead = 0.6, focus = 1.30,
+    shoulderScale = 0.15, timeScale = 0.95,
+    shake = 0.75, hitstop = 0.9, sway = 0.45, drag = 0.75, lead = 0.45, focus = 1.15,
     aimOnCast = false, dynamicPitch = false,
   },
   rdr2 = {
     name = "Red Dead Redemption 2",
-    description = "Slow, weighty, and cinematic, with a distant mounted view and aim while casting, like Dead Eye.",
-    foot = { zoomScale = 0.85, zoomAdd = 3.0, fovAdd = -4 },
+    description = "A slow, weighty third-person view with a broader riding frame and a closer view while casting.",
+    foot = { zoomScale = 0.85, zoomAdd = 1.5, fovAdd = -2 },
     group = { zoomScale = 1, zoomAdd = 0.5, fovAdd = -2 },
-    mount = { zoomScale = 1, zoomAdd = 2.5, fovAdd = -3 },
-    shoulderScale = 0.55, timeScale = 1.40,
-    shake = 0.6, hitstop = 0.5, sway = 0.8, drag = 0.9, lead = 0.8, focus = 0.85,
+    mount = { zoomScale = 1, zoomAdd = 1.5, fovAdd = -2 },
+    shoulderScale = 0.65, mountShoulderScale = 0.30, timeScale = 1.35,
+    shake = 0.6, hitstop = 0.5, sway = 0.7, drag = 0.9, lead = 0.8, focus = 0.85,
     aimOnCast = true, dynamicPitch = false,
   },
   tlou2 = {
     name = "The Last of Us Part II",
-    description = "Low and tight over the shoulder with a narrow view, slow tense movement, and aim while casting.",
-    foot = { zoomScale = 0.6, zoomAdd = -1.5, fovAdd = -8 },
+    description = "Close shoulder framing with a narrower view and a steadier, closer frame while casting.",
+    foot = { zoomScale = 0.75, zoomAdd = 0.5, fovAdd = -5 },
     group = { zoomScale = 0.9, zoomAdd = 0, fovAdd = -3 },
     mount = { zoomScale = 1, zoomAdd = 0, fovAdd = -3 },
-    shoulderScale = 0.95, timeScale = 1.35,
-    shake = 0.7, hitstop = 0.6, sway = 1.1, drag = 0.6, lead = 0.9, focus = 0.8,
+    shoulderScale = 0.65, timeScale = 1.25,
+    shake = 0.7, hitstop = 0.6, sway = 0.8, drag = 0.6, lead = 0.9, focus = 0.8,
     aimOnCast = true, dynamicPitch = false,
   },
   tsushima = {
     name = "Ghost of Tsushima",
-    description = "Mid-distance and nearly centered, with long, silky transitions and a view that opens wide against groups.",
+    description = "A cinematic, near-centered view that opens out as more enemies close in.",
     foot = { zoomScale = 0.9, zoomAdd = 1.5, fovAdd = -1 },
     group = { zoomScale = 1, zoomAdd = 0.5, fovAdd = 0 },
     mount = { zoomScale = 1, zoomAdd = 1.0, fovAdd = -1 },
-    shoulderScale = 0.30, timeScale = 1.50,
-    shake = 0.5, hitstop = 0.5, sway = 0.6, drag = 1.0, lead = 1.1, focus = 0.9,
+    shoulderScale = 0.30, timeScale = 1.35,
+    shake = 0.5, hitstop = 0.5, sway = 0.6, drag = 1.0, lead = 1.0, focus = 0.9,
     aimOnCast = false, dynamicPitch = false,
   },
   sekiro = {
     name = "Sekiro: Shadows Die Twice",
-    description = "Closer than Elden Ring and faster, locked onto the enemy with sharp impacts and little drift.",
+    description = "Closer and more responsive than Elden Ring, with firm but restrained target framing.",
     foot = { zoomScale = 0.7, zoomAdd = 1.0, fovAdd = -4 },
     group = { zoomScale = 0.95, zoomAdd = 0.3, fovAdd = -2 },
     mount = { zoomScale = 1, zoomAdd = 1.0, fovAdd = -1 },
-    shoulderScale = 0.15, timeScale = 0.70,
-    shake = 1.0, hitstop = 1.2, sway = 0.5, drag = 0.7, lead = 0.5, focus = 1.40,
+    shoulderScale = 0.15, timeScale = 0.80,
+    shake = 0.85, hitstop = 1.0, sway = 0.35, drag = 0.5, lead = 0.35, focus = 1.25,
     aimOnCast = false, dynamicPitch = false,
   },
   pvp = {
@@ -456,6 +456,8 @@ local PRESET_ORDER = { "ragnarok", "darksiders", "horizon", "spacemarine", "witc
 
 local SETTINGS_DEFAULTS = {
   preset = "ragnarok",
+  actionCameraEnabled = true,
+  raceTuning = true,
   autoPvpCamera = true,
   zoomScale = 100,
   shakeIntensity = 100,
@@ -473,15 +475,38 @@ local SETTINGS_DEFAULTS = {
   freeFollow = false,
 }
 
+-- Conservative framing estimates by locale-independent UnitRace token. WoW
+-- exposes race, but not live world-model bounds; forms keep normal framing.
+ns.RACE_FRAMING = {
+  Gnome = { 0.94, 0.96 }, Goblin = { 0.96, 0.97 }, Mechagnome = { 0.94, 0.96 },
+  Vulpera = { 0.97, 0.98 }, Dwarf = { 0.97, 0.98 }, DarkIronDwarf = { 0.97, 0.98 },
+  EarthenDwarf = { 0.98, 0.99 }, Human = { 1.00, 1.00 }, NightElf = { 1.02, 1.01 },
+  BloodElf = { 1.00, 1.00 }, Orc = { 1.03, 1.02 }, Scourge = { 1.00, 1.00 },
+  Troll = { 1.04, 1.02 }, ZandalariTroll = { 1.07, 1.03 }, Tauren = { 1.10, 1.04 },
+  HighmountainTauren = { 1.10, 1.04 }, Draenei = { 1.06, 1.03 },
+  LightforgedDraenei = { 1.06, 1.03 }, Worgen = { 1.05, 1.03 },
+  Pandaren = { 1.03, 1.02 }, KulTiran = { 1.07, 1.03 }, MagharOrc = { 1.03, 1.02 },
+  Nightborne = { 1.02, 1.01 }, VoidElf = { 1.02, 1.01 }, Dracthyr = { 1.08, 1.04 },
+  Haranir = { 1.04, 1.02 },
+}
+
 -- Live settings; replaced by MythicViewDB.settings at login.
 local settings = {}
 for key, value in pairs(SETTINGS_DEFAULTS) do settings[key] = value end
+
+function ns.GetRaceFraming()
+  if not settings.raceTuning or type(UnitRace) ~= "function" then return 1, 1 end
+  local _, raceToken = UnitRace("player")
+  local values = raceToken and ns.RACE_FRAMING[raceToken]
+  return values and values[1] or 1, values and values[2] or 1
+end
 
 -- Effective tuning, derived from the style and the settings.
 local tune = {}
 local PROFILES = {}
 -- Keep PvP helpers on the addon namespace: Lua 5.1 caps chunk locals at 200.
 function ns.GetEffectivePresetID()
+  if not settings.actionCameraEnabled then return settings.preset end
   local _, instanceType = IsInInstance()
   if settings.autoPvpCamera and (instanceType == "arena" or instanceType == "pvp") then
     return "pvp"
@@ -529,8 +554,10 @@ local function RebuildTuning()
   tune.dynamicPitch = preset.dynamicPitch
 
   local zoomScale = settings.zoomScale / 100
+  local raceZoomScale, raceShoulderScale = ns.GetRaceFraming()
   for profileID, base in pairs(BASE_PROFILES) do
-    local shape = preset[GetProfileGroup(profileID)]
+    local group = GetProfileGroup(profileID)
+    local shape = preset[group]
     local profile = PROFILES[profileID] or {}
     if pvpFixed and profileID == "pvp" then
       profile.zoom = FEEL.maxZoom
@@ -539,8 +566,12 @@ local function RebuildTuning()
       profile.transitionDuration = nil
       profile.fovTransitionDuration = nil
     else
-      profile.zoom = max(1, (base.zoom * shape.zoomScale + shape.zoomAdd) * zoomScale)
-      profile.shoulder = base.shoulder * preset.shoulderScale
+      profile.zoom = max(1, (base.zoom * shape.zoomScale + shape.zoomAdd) * zoomScale
+        * (group ~= "mount" and not pvpFixed and raceZoomScale or 1))
+      local shoulderScale = group == "mount" and (preset.mountShoulderScale or preset.shoulderScale)
+        or preset.shoulderScale
+      profile.shoulder = base.shoulder * shoulderScale
+        * (group ~= "mount" and not pvpFixed and raceShoulderScale or 1)
       profile.fov = min(90, max(50, base.fov + shape.fovAdd))
       profile.transitionDuration = base.transitionDuration
         and base.transitionDuration * preset.timeScale
@@ -560,6 +591,8 @@ local pollElapsed = 0
 local motionUpdateElapsed = 0
 local cameraUpdateElapsed = 0
 local originalCVars = {}
+local RestoreCameraSettings
+local cameraControlsActive = false
 local activeMountID
 local activeMountScanned = false
 local lastMountedState
@@ -897,10 +930,11 @@ local function UpdateBackwardCameraStage(elapsed)
   end
 
   backwardMoveElapsed = backwardMoveElapsed + elapsed
-  local nextStage = backwardMoveElapsed >= K.BACKWARD_REVEAL_DELAY and 4
-    or (backwardMoveElapsed >= K.BACKWARD_LIMIT_DELAY and 3
-      or (backwardMoveElapsed >= K.BACKWARD_SETTLE_DELAY and 2
-        or (backwardMoveElapsed >= K.BACKWARD_APPROACH_DELAY and 1 or 0)))
+  local timeScale = tune.time or 1
+  local nextStage = backwardMoveElapsed >= K.BACKWARD_REVEAL_DELAY * timeScale and 4
+    or (backwardMoveElapsed >= K.BACKWARD_LIMIT_DELAY * timeScale and 3
+      or (backwardMoveElapsed >= K.BACKWARD_SETTLE_DELAY * timeScale and 2
+        or (backwardMoveElapsed >= K.BACKWARD_APPROACH_DELAY * timeScale and 1 or 0)))
   if nextStage ~= backwardCameraStage then
     backwardCameraStage = nextStage
     ApplyCurrentProfile()
@@ -1697,6 +1731,7 @@ local function GetFocusStrength()
 end
 
 local function UpdateTargetFocus(elapsed)
+  if not settings.actionCameraEnabled then return end
   local _, instanceType = IsInInstance()
   if tune.pvpFixed or instanceType == "pvp" or instanceType == "arena" then
     -- Do not leave even a fading target-follow active after entering PvP.
@@ -1746,6 +1781,7 @@ local function UpdateTargetFocus(elapsed)
 end
 
 local function SetLockOn(enabled)
+  if not settings.actionCameraEnabled then enabled = false end
   if enabled and tune.pvpFixed then enabled = false end
   enabled = enabled and HasHostileTarget() or false
   if enabled == lockOn then return end
@@ -1875,7 +1911,7 @@ function ns.ResetPvpCameraLayers()
 end
 
 ApplyCurrentProfile = function()
-  if taxiSuspended then return end
+  if taxiSuspended or not settings.actionCameraEnabled then return end
   local profileID, profile = SelectProfile()
   if profileID == "pvp" and activeProfile ~= "pvp" then
     ns.ResetPvpCameraLayers()
@@ -1958,7 +1994,7 @@ local function OnManualZoom()
   StopZoomMovement()
 end
 
-local function SaveCameraSettings()
+local function SaveCameraSettings(refreshCurrentValues)
   MythicViewDB.cameraCVarBaseline = MythicViewDB.cameraCVarBaseline or {}
   local baseline = MythicViewDB.cameraCVarBaseline
 
@@ -1967,6 +2003,12 @@ local function SaveCameraSettings()
   -- distinguish the addon's persisted camera values from the user's settings.
   -- Missing entries are a migration path for CVars added in newer versions.
   local function rememberOriginal(name)
+    if refreshCurrentValues then
+      local current = GetCVar(name)
+      originalCVars[name] = current
+      if current ~= nil then baseline[name] = current end
+      return
+    end
     local saved = baseline[name]
     if saved ~= nil then
       originalCVars[name] = tostring(saved)
@@ -1980,11 +2022,6 @@ local function SaveCameraSettings()
   for _, name in ipairs(CAMERA_CVARS) do
     rememberOriginal(name)
   end
-
-  -- These Blizzard accessibility options suppress the horizontal shoulder offset.
-  -- They are restored on logout, exactly as they were before this addon loaded.
-  SetCVar("CameraKeepCharacterCentered", "0", "MythicView")
-  SetCVar("CameraReduceUnexpectedMovement", "0", "MythicView")
 
   -- Engine settings are applied by ApplyEngineSettings; remember originals.
   -- A CVar this client lacks stays nil and is never touched.
@@ -2010,10 +2047,18 @@ local function ApplyEngineSettings()
   SetEngineGroup(FEEL.dynamicPitch, tune.dynamicPitch)
 end
 
+local function ApplyCameraOverrides()
+  -- These Blizzard accessibility options suppress the horizontal shoulder offset.
+  SetCVar("CameraKeepCharacterCentered", "0", "MythicView")
+  SetCVar("CameraReduceUnexpectedMovement", "0", "MythicView")
+  ApplyEngineSettings()
+end
+
 local lastPresetID
 
 -- Called on login and whenever the menu changes a value.
 local function ApplySettings()
+  local justEnabled = false
   if settings.preset ~= lastPresetID then
     local preset = PRESETS[settings.preset] or PRESETS.ragnarok
     if lastPresetID ~= nil and settings.aimOnCast ~= preset.aimOnCast then
@@ -2025,8 +2070,30 @@ local function ApplySettings()
     lastPresetID = settings.preset
   end
   RebuildTuning()
-  if not taxiSuspended then ApplyEngineSettings() end
-  if cam.ready then
+  if not settings.actionCameraEnabled then
+    local wasTaxiSuspended = taxiSuspended
+    taxiSuspended = false
+    lockOn, aiming = false, false
+    ns.ResetPvpCameraLayers()
+    if cameraControlsActive and not wasTaxiSuspended then RestoreCameraSettings() end
+    cameraControlsActive = false
+    cam.ready = false
+    transition = nil
+    activeProfile = nil
+    cam.focusYaw, cam.focusYawVelocity = 0, 0
+    cam.focusPitch, cam.focusPitchVelocity = 0, 0
+    ResetFrameCVarCache()
+  else
+    if not cameraControlsActive then
+      SaveCameraSettings(true)
+      cameraControlsActive = true
+      ApplyCameraOverrides()
+      justEnabled = true
+    elseif not taxiSuspended then
+      ApplyEngineSettings()
+    end
+  end
+  if (cam.ready or justEnabled) and settings.actionCameraEnabled and not taxiSuspended then
     activeProfile = nil
     ApplyCurrentProfile()
   end
@@ -2049,7 +2116,7 @@ ns.SHAKES_ENABLED = FEEL.shakesEnabled
 ns.GetSettings = function() return settings end
 ns.ApplySettings = ApplySettings
 
-local function RestoreCameraSettings()
+RestoreCameraSettings = function()
   StopZoomMovement()
   StopPitchMovement()
   targetFocusEnabled = nil
@@ -2083,9 +2150,7 @@ end
 
 local function ResumeFromTaxi()
   taxiSuspended = false
-  SetCVar("CameraKeepCharacterCentered", "0", "MythicView")
-  SetCVar("CameraReduceUnexpectedMovement", "0", "MythicView")
-  ApplyEngineSettings()
+  ApplyCameraOverrides()
   ResetFrameCVarCache()
   activeProfile = nil
   ApplyCurrentProfile()
@@ -2162,6 +2227,7 @@ frame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 frame:RegisterEvent("PLAYER_LOGOUT")
 frame:SetScript("OnEvent", function(_, event, unit, ...)
   if event == "UNIT_COMBAT" then
+    if not settings.actionCameraEnabled then return end
     -- High-frequency on a raid boss target: keep this path allocation-free.
     if unit == "target" and not pendingHit and IsInGroup() then
       unitCombatSeen = true
@@ -2170,6 +2236,7 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     OnUnitCombat(unit, ...)
     return
   elseif event == "UNIT_SPELLCAST_START" then
+    if not settings.actionCameraEnabled then return end
     local castGUID = ...
     if IsReadableString(castGUID) then
       castStartTime, castStartGUID = GetTime(), castGUID
@@ -2177,16 +2244,26 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     aiming = true
     return
   elseif event == "UNIT_SPELLCAST_CHANNEL_START" then
+    if not settings.actionCameraEnabled then return end
     aiming = true
     return
   elseif event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_FAILED"
       or event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
+    if not settings.actionCameraEnabled then return end
     aiming = false
     return
   elseif event == "PLAYER_LOGIN" then
     MythicViewDB = MythicViewDB or {}
+    local previousCameraWasActive = MythicViewDB.cameraActiveAtLogout ~= false
     LoadSettings()
     SaveCameraSettings()
+    if not settings.actionCameraEnabled and previousCameraWasActive then
+      RestoreCameraSettings()
+    elseif settings.actionCameraEnabled then
+      cameraControlsActive = true
+      SetCVar("CameraKeepCharacterCentered", "0", "MythicView")
+      SetCVar("CameraReduceUnexpectedMovement", "0", "MythicView")
+    end
     ApplySettings()
     SuppressActionCamWarning()
     if ns.BuildOptions then
@@ -2204,13 +2281,16 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     C_Timer.After(1.50, ApplyAzeriteCinematicPreset)
     return
   elseif event == "PLAYER_LOGOUT" then
-    RestoreCameraSettings()
+    MythicViewDB.cameraActiveAtLogout = settings.actionCameraEnabled
     -- Keep a clean, confirmed baseline in SavedVariables. Do not clear it:
     -- the next client session may end without PLAYER_LOGOUT being delivered.
-    MythicViewDB.cameraCVarBaseline = MythicViewDB.cameraCVarBaseline or {}
-    for name, value in pairs(originalCVars) do
-      if value ~= nil then
-        MythicViewDB.cameraCVarBaseline[name] = value
+    if cameraControlsActive then
+      if not taxiSuspended then RestoreCameraSettings() end
+      MythicViewDB.cameraCVarBaseline = MythicViewDB.cameraCVarBaseline or {}
+      for name, value in pairs(originalCVars) do
+        if value ~= nil then
+          MythicViewDB.cameraCVarBaseline[name] = value
+        end
       end
     end
     return
@@ -2235,6 +2315,8 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     end
     return
   end
+
+  if not settings.actionCameraEnabled then return end
 
   if taxiSuspended then return end
 
@@ -2281,6 +2363,10 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
 end)
 
 frame:SetScript("OnUpdate", function(_, elapsed)
+  if not settings.actionCameraEnabled then
+    pollElapsed, motionUpdateElapsed, cameraUpdateElapsed = 0, 0, 0
+    return
+  end
   pollElapsed = pollElapsed + elapsed
   if taxiSuspended then
     if pollElapsed >= PROFILE_POLL_INTERVAL then

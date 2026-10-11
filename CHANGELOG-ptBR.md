@@ -1,22 +1,23 @@
 # Mythic View — Changelog
 
-## 2.0.0 — Lançamento da integração de combate (2026-10-10)
+## 3.0.0 — Câmera configurável e enquadramento por raça (2026-10-10)
 
 ### Adicionado
 
-- Integração do mouse look, reticle targeting, crosshair, click casting, Auto Unlock e Ally Cycle nas páginas de configurações do Mythic View.
-- Controles nativos do WoW para vínculos de teclas, cores de reação e configurações avançadas de targeting.
+- Opção para alternar entre a câmera Action Combat do Mythic View e a câmera tradicional do WoW. Ao desativar o Mythic View, as configurações salvas da câmera são restauradas e os perfis e efeitos são pausados.
+- Ajuste aproximado de distância e ombro por raça nos perfis a pé e de grupo, com opção para desativar o ajuste.
+- Integração do mouse look, reticle targeting, crosshair, click casting, Auto Unlock, Ally Cycle e controles avançados do Combat Mode nas páginas nativas de configurações do Mythic View.
 - Tags de orientação nas opções: Recommended, Optional, Not recommended e Advanced.
+- Perfis de câmera de The Last of Us Part II, Ghost of Tsushima e Sekiro, além da câmera PvP Competitiva automática.
 
 ### Alterado
 
-- O Mythic View agora reúne as configurações da câmera e do combate em uma interface nativa de Settings.
+- O Mythic View agora reúne as configurações da câmera e do combate em uma interface nativa de Settings. Os perfis de câmera foram recalibrados e os controles integrados do Combat Mode usam a mesma interface.
 - Os dados do Combat Mode ficam em `MythicViewDB.combatMode`. Para migrar os dados do addon independente, execute `scripts/migrate_combatmode_sv.py` com o WoW fechado.
 
 ### Corrigido
 
-- Inicialização do changelog do Combat Mode quando integrado ao Mythic View.
-- Janelas com estilo do Combat Mode abertas pelas configurações integradas e texto cortado na legenda.
+- Inicialização do changelog do Combat Mode quando integrado ao Mythic View, controles de configurações integrados e texto cortado na legenda.
 
 ## 1.1.0 — Três novos estilos de câmera (2026-10-08)
 

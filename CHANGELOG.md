@@ -1,22 +1,23 @@
 # Mythic View — Changelog
 
-## 2.0.0 — Unified action-combat release (2026-10-10)
+## 3.0.0 — Action camera choice and race-aware framing (2026-10-10)
 
 ### Added
 
-- Integrated Combat Mode's mouse look, reticle targeting, crosshair, click casting, Auto Unlock, and Ally Cycle into Mythic View's Settings pages.
-- Added Blizzard-native key binding rows, reaction color selection, and settings controls for click-cast actions and advanced targeting configuration.
+- Added an optional camera switch between Mythic View's Action Combat camera and the traditional WoW camera. Disabling Mythic View restores the saved camera settings and pauses camera profiles and effects.
+- Added approximate race-based distance and shoulder framing for ground and group profiles, with an option to disable the adjustment.
+- Integrated Combat Mode's mouse look, reticle targeting, crosshair, click casting, Auto Unlock, Ally Cycle, and advanced combat controls into Mythic View's native Settings pages.
 - Added guidance tags to settings: Recommended, Optional, Not recommended, and Advanced.
+- Added the Last of Us Part II, Ghost of Tsushima, and Sekiro camera profiles, alongside the automatic Competitive PvP camera.
 
 ### Changed
 
-- Mythic View now owns the combined camera and action-combat settings experience. Combat controls opened from Mythic View use the same native Settings interface.
-- Combat Mode data is stored under `MythicViewDB.combatMode`; use `scripts/migrate_combatmode_sv.py` after closing WoW to migrate settings from the standalone addon's saved variables.
+- Mythic View now owns the combined camera and action-combat settings experience. Camera profiles were retuned, and the integrated Combat Mode controls use the same native Settings interface.
+- Combat Mode data is stored under `MythicViewDB.combatMode`; use `scripts/migrate_combatmode_sv.py` with WoW closed to migrate settings from the standalone addon's saved variables.
 
 ### Fixed
 
-- Fixed Combat Mode changelog initialization when embedded in Mythic View.
-- Fixed settings controls that opened Combat Mode-styled windows and corrected clipped settings legend text.
+- Fixed Combat Mode changelog initialization when embedded in Mythic View and corrected integrated settings controls and clipped legend text.
 
 ## 1.2.0 — Integrated Combat Mode (2026-10-10)
 

@@ -380,6 +380,8 @@ function ns.BuildOptions()
     end
     return container:GetData()
   end, "Changes the camera distance, framing, pacing, and overall intensity.")
+  Checkbox("actionCameraEnabled", "Use Mythic View camera (Action Combat style)",
+    "When disabled, Mythic View restores your saved WoW camera settings and leaves camera control to the traditional WoW camera. Camera profiles, effects, and automatic PvP framing pause until re-enabled.", "optional")
   Checkbox("autoPvpCamera", "Automatically use PvP camera in arenas and battlegrounds",
     "Temporarily switches to PvP Competitive in arenas and battlegrounds: fixed 90-degree FOV, maximum addon zoom, centered framing, and no dynamic camera effects. Restores your selected style when you leave.", "good")
   Percent("zoomScale", "Camera distance", 70, 150,
@@ -408,6 +410,8 @@ function ns.BuildOptions()
     "Turning or strafing opens space in the direction you are moving.", "good")
   Checkbox("composition", "Maintain rule of thirds",
     "When zoom or FOV changes dynamically, the shoulder offset follows so your character stays in place on screen.", "good")
+  Checkbox("raceTuning", "Adapt framing to character race",
+    "Applies a small approximate distance and shoulder adjustment for your race to on-foot profiles, including group instances. WoW does not expose the live size of your character model, so forms and transformations use the base-race estimate. Mounted and fixed PvP profiles are unchanged.", "optional")
   Checkbox("rubberBand", "Widen for many enemies (rubber band)",
     "Each attacker beyond four widens the frame a little more.", "optional")
   Checkbox("aimOnCast", "Aim zoom while casting",
