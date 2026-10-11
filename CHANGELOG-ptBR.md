@@ -1,5 +1,9 @@
 # Mythic View — Changelog
 
+## 3.1.0 — Estilo de câmera inspirado em Black Desert (2026-10-10)
+
+- Adicionado um perfil inspirado em Black Desert Online, com enquadramento de ação responsivo, visão mais ampla e deslocamento moderado para o ombro.
+
 ## 3.0.0 — Câmera configurável e enquadramento por raça (2026-10-10)
 
 ### Adicionado

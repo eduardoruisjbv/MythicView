@@ -1,5 +1,9 @@
 # Mythic View — Changelog
 
+## 3.1.0 — Black Desert inspired camera style (2026-10-10)
+
+- Added a Black Desert Online-inspired profile with responsive action framing, a wider view, and a modest shoulder offset.
+
 ## 3.0.0 — Action camera choice and race-aware framing (2026-10-10)
 
 ### Added

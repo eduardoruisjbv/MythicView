@@ -441,6 +441,16 @@ local PRESETS = {
     shake = 0.85, hitstop = 1.0, sway = 0.35, drag = 0.5, lead = 0.35, focus = 1.25,
     aimOnCast = false, dynamicPitch = false,
   },
+  blackdesert = {
+    name = "Black Desert Online",
+    description = "Responsive action framing with a broad view and a modest shoulder offset.",
+    foot = { zoomScale = 0.92, zoomAdd = 0.8, fovAdd = 1 },
+    group = { zoomScale = 1, zoomAdd = 0.5, fovAdd = 1 },
+    mount = { zoomScale = 1, zoomAdd = 1.2, fovAdd = 1 },
+    shoulderScale = 0.72, mountShoulderScale = 0.45, timeScale = 0.88,
+    shake = 0.65, hitstop = 0.55, sway = 0.55, drag = 0.72, lead = 0.8, focus = 0.55,
+    aimOnCast = true, dynamicPitch = false,
+  },
   pvp = {
     name = "PvP — Competitive",
     description = "Fixed 90-degree FOV, maximum addon zoom and centered framing, with no dynamic camera effects.",
@@ -452,7 +462,7 @@ local PRESETS = {
     aimOnCast = false, dynamicPitch = false,
   },
 }
-local PRESET_ORDER = { "ragnarok", "darksiders", "horizon", "spacemarine", "witcher", "eldenring", "rdr2", "tlou2", "tsushima", "sekiro", "pvp" }
+local PRESET_ORDER = { "ragnarok", "darksiders", "horizon", "spacemarine", "witcher", "eldenring", "rdr2", "tlou2", "tsushima", "sekiro", "blackdesert", "pvp" }
 
 local SETTINGS_DEFAULTS = {
   preset = "ragnarok",
