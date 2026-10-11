@@ -56,6 +56,7 @@ end
 UI.Options.AddTab({
   id = "crosshair",
   label = "Crosshair",
+  experimentalOnly = true,
   onSelect = function()
     CM.SetCrosshairOptionsPreview(true)
   end,

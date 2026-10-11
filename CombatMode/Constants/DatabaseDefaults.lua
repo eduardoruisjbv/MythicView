@@ -90,7 +90,7 @@ CM.Constants.DatabaseDefaults = {
     -- crosshair
     crosshair = true,
     crosshairCastFeedback = true,
-    crosshairAppearance = CM.Constants.CrosshairTextureObj.Default,
+    crosshairAppearance = CM.Constants.CrosshairTextureObj.Dot,
     crosshairScale = 1.0,
     crosshairY = 100,
     -- interaction HUD

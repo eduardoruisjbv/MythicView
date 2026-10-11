@@ -347,6 +347,12 @@ function CM.InitDatabase()
       end
     end
   end
+  -- Dot is the unobtrusive default reticle. Preserve any other appearance the user chose.
+  if type(sv.global.crosshairAppearance) == "table"
+    and sv.global.crosshairAppearance.Name == "Default"
+  then
+    sv.global.crosshairAppearance = defaults.global.crosshairAppearance
+  end
   if CM.MigrateMouseLookCameraDB then
     CM.MigrateMouseLookCameraDB()
   end

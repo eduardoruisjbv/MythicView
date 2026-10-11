@@ -42,6 +42,8 @@ local C = UI.Colors
 UI.Options = UI.Options or {}
 local Options = UI.Options
 Options.tabDefs = Options.tabDefs or {}
+Options.tabsByID = Options.tabsByID or {}
+Options.experimentalEnabled = false
 
 local WINDOW_W, WINDOW_H = 740, 560
 local SIDEBAR_W = 176
@@ -427,6 +429,9 @@ local function DeactivateTab()
 end
 
 local function SelectTab(tab)
+  if not tab or (tab.def.experimentalOnly and not Options.experimentalEnabled) then
+    return
+  end
   if activeTab == tab and tab.scroll:IsShown() and tab.scroll:GetAlpha() >= 0.99 then
     return
   end
@@ -541,7 +546,48 @@ local function BuildTab(def, index)
     end
   end)
   tabs[#tabs + 1] = tab
+  if def.id then
+    Options.tabsByID[def.id] = tab
+  end
+  if def.experimentalOnly and not Options.experimentalEnabled then
+    tab.button:Hide()
+  end
   return tab
+end
+
+local function RefreshExperimentalTabs()
+  local visibleIndex = 0
+  for _, tab in ipairs(tabs) do
+    if tab.def.experimentalOnly then
+      if Options.experimentalEnabled then
+        visibleIndex = visibleIndex + 1
+        tab.button:ClearAllPoints()
+        tab.button:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -56 - (visibleIndex - 1) * 32)
+        tab.button:Show()
+      else
+        tab.button:Hide()
+      end
+    else
+      visibleIndex = visibleIndex + 1
+      tab.button:ClearAllPoints()
+      tab.button:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -56 - (visibleIndex - 1) * 32)
+      tab.button:Show()
+    end
+  end
+  if not Options.experimentalEnabled and activeTab and activeTab.def.experimentalOnly then
+    SelectTab(Options.tabsByID.general or tabs[1])
+  end
+end
+
+function CM.SetExperimentalMode(enabled)
+  Options.experimentalEnabled = enabled and true or false
+  RefreshExperimentalTabs()
+end
+
+addonNS.SetCombatModeExperimentalMode = CM.SetExperimentalMode
+addonNS.OpenExperimentalCrosshairOptions = function()
+  CM.SetExperimentalMode(true)
+  CM.OpenOptions("crosshair")
 end
 
 --- Utility controls pinned to the bottom of the sidebar (formerly the About tab): the
@@ -714,6 +760,7 @@ local function BuildShell()
   for index, def in ipairs(Options.tabDefs) do
     BuildTab(def, index)
   end
+  RefreshExperimentalTabs()
 
   BuildSidebarFooter()
 
@@ -743,7 +790,7 @@ local function CombatBlocked()
   return false
 end
 
-function CM.OpenOptions()
+function CM.OpenOptions(tabID)
   if CombatBlocked() then
     return
   end
@@ -751,6 +798,9 @@ function CM.OpenOptions()
   Options.DockWindowLeft()
   frame:Show()
   frame:Raise()
+  if tabID then
+    SelectTab(Options.tabsByID[tabID])
+  end
   Options.Sync()
 end
 

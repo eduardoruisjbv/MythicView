@@ -1811,10 +1811,21 @@ SlashCmdList.MYTHICVIEW = function(message)
     else
       print("|cffd9bf8cMythic View|r: combat controls are unavailable.")
     end
+  elseif command == "experimental" then
+    if ns.OpenExperimentalCrosshairOptions then
+      ns.OpenExperimentalCrosshairOptions()
+    else
+      print("|cffd9bf8cMythic View|r: experimental crosshair settings are unavailable.")
+    end
+  elseif command == "experimental off" then
+    if ns.SetCombatModeExperimentalMode then
+      ns.SetCombatModeExperimentalMode(false)
+      print("|cffd9bf8cMythic View|r: experimental settings hidden.")
+    end
   elseif ns.OpenOptions then
     ns.OpenOptions()
   else
-    print("|cffd9bf8cMythic View|r: /mv — menu, /mv combat — combat controls, /mv lock — travar/soltar o alvo atual.")
+    print("|cffd9bf8cMythic View|r: /mv — menu, /mv combat — combat controls, /mv experimental — experimental settings, /mv lock — travar/soltar o alvo atual.")
   end
 end
 

@@ -177,6 +177,9 @@ local function RegisterCombatControlsSubcategory(parentCategory)
   end
 
   for _, def in ipairs(definitions) do
+    -- Experimental tabs are exposed only by the explicit in-addon command;
+    -- do not register a parallel Blizzard Settings category for them.
+    if not def.experimentalOnly then
     local category, layout = Settings.RegisterVerticalLayoutSubcategory(parentCategory, def.label)
     if category and layout then
       -- Some embedded tab builders create their own frame controls before the
@@ -297,6 +300,7 @@ local function RegisterCombatControlsSubcategory(parentCategory)
 
       if def.build then def.build(ctx) end
       ns.combatModeCategories[def.id] = category
+    end
     end
   end
   ns.combatModeCategory = combatCategory

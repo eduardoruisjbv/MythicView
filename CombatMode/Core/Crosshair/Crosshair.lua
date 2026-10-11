@@ -51,6 +51,9 @@ local UnitExists = _G.UnitExists
 local UnitIsGameObject = _G.UnitIsGameObject
 local UnitIsPlayer = _G.UnitIsPlayer
 local UnitReaction = _G.UnitReaction
+local UnitAffectingCombat = _G.UnitAffectingCombat
+local GetSpecialization = _G.GetSpecialization
+local GetSpecializationInfo = _G.GetSpecializationInfo
 local PlaySound = _G.PlaySound
 local SOUNDKIT = _G.SOUNDKIT
 
@@ -67,6 +70,63 @@ local function PublicBool(value)
     return nil
   end
   return value and true or false
+end
+
+-- Classify active specs conservatively: only known ranged DPS specs receive the
+-- out-of-combat reticle; known melee specs receive it in combat; healer/unknown
+-- specs stay hidden until Blizzard exposes a reliable ranged/melee distinction.
+local RANGED_SPEC_IDS = {
+  [62] = true, [63] = true, [64] = true,       -- Mage
+  [102] = true,                                -- Balance Druid
+  [253] = true, [254] = true,                 -- Beast Mastery / Marksmanship
+  [258] = true,                                -- Shadow Priest
+  [262] = true,                                -- Elemental Shaman
+  [265] = true, [266] = true, [267] = true,   -- Warlock
+  [1467] = true, [1473] = true,               -- Devastation / Augmentation Evoker
+}
+local MELEE_SPEC_IDS = {
+  [71] = true, [72] = true, [73] = true,       -- Warrior
+  [66] = true, [70] = true,                   -- Paladin
+  [250] = true, [251] = true, [252] = true,   -- Death Knight
+  [259] = true, [260] = true, [261] = true,   -- Rogue
+  [263] = true,                               -- Enhancement Shaman
+  [103] = true, [104] = true,                 -- Feral / Guardian Druid
+  [255] = true,                               -- Survival Hunter
+  [268] = true, [269] = true,                 -- Brewmaster / Windwalker Monk
+  [577] = true, [581] = true,                 -- Demon Hunter
+}
+
+function CM.GetCrosshairCombatRole()
+  if not GetSpecialization or not GetSpecializationInfo then
+    return "unknown"
+  end
+  local specIndex = GetSpecialization()
+  if not specIndex then
+    return "unknown"
+  end
+  local specID = GetSpecializationInfo(specIndex)
+  if RANGED_SPEC_IDS[specID] then
+    return "ranged"
+  end
+  if MELEE_SPEC_IDS[specID] then
+    return "melee"
+  end
+  return "unknown"
+end
+
+function CM.ShouldShowContextualCrosshair()
+  if not CM.IsCrosshairEnabled() then
+    return false
+  end
+  if CM.IsCrosshairPreviewActive and CM.IsCrosshairPreviewActive() then
+    return true
+  end
+  local role = CM.GetCrosshairCombatRole()
+  if role == "ranged" then
+    return true
+  end
+  return role == "melee" and UnitAffectingCombat
+    and PublicBool(UnitAffectingCombat("player")) == true
 end
 
 -- Soft UI ticks on Master: character panel open/close for lock/unlock; option click for cycle.
@@ -246,7 +306,9 @@ local function ApplyFocusLockIdleReticle()
   CrosshairTexture:SetTexture(GetFocusLockIdleTexturePath())
   local r, g, b, a = GetFocusLockIdleColor()
   CrosshairTexture:SetVertexColor(r, g, b, a)
-  if CM.IsCrosshairEnabled() and (CM.IsMouselooking() or CM.IsCrosshairPreviewActive()) then
+  if CM.ShouldShowContextualCrosshair()
+    and (CM.IsMouselooking() or CM.IsCrosshairPreviewActive())
+  then
     CrosshairTexture:Show()
   end
 end
@@ -265,7 +327,7 @@ function CM.SetFocusLockReticleSuppressed(suppressed)
     return
   end
   CrosshairVisualFrame:SetAlpha(1)
-  if CM.IsCrosshairEnabled() and CM.IsMouselooking() then
+  if CM.ShouldShowContextualCrosshair() and CM.IsMouselooking() then
     CrosshairTexture:Show()
     lastKnownAppearanceState = nil
     CM.UpdateCrosshairReaction()
@@ -353,6 +415,9 @@ function CM.DisplayCrosshair(shouldShow)
   if not shouldShow and CM.IsCrosshairPreviewActive() and CM.IsCrosshairEnabled() then
     shouldShow = true
   end
+  if shouldShow and not CM.ShouldShowContextualCrosshair() then
+    shouldShow = false
+  end
   if shouldShow then
     CrosshairFrame:SetAlpha(1)
     CrosshairVisualFrame:SetAlpha(1)
@@ -378,6 +443,22 @@ function CM.DisplayCrosshair(shouldShow)
     CM.RefreshAllyCycleHUD()
   end
 end
+
+-- Re-evaluate context at combat and specialization boundaries. The normal runtime
+-- still owns Mouse Look visibility; this watcher only applies the ranged/melee policy.
+local CrosshairContextWatcher = CreateFrame("Frame")
+CrosshairContextWatcher:RegisterEvent("PLAYER_ENTERING_WORLD")
+CrosshairContextWatcher:RegisterEvent("PLAYER_REGEN_DISABLED")
+CrosshairContextWatcher:RegisterEvent("PLAYER_REGEN_ENABLED")
+CrosshairContextWatcher:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+CrosshairContextWatcher:RegisterEvent("PLAYER_TALENT_UPDATE")
+CrosshairContextWatcher:SetScript("OnEvent", function()
+  if CM.IsCrosshairEnabled() then
+    CM.DisplayCrosshair(CM.IsMouselooking())
+  else
+    CM.DisplayCrosshair(false)
+  end
+end)
 
 function CM.CreateCrosshair()
   local crosshairSize = CM.GetCrosshairPixelSize()
