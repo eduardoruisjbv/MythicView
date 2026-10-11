@@ -1,5 +1,12 @@
 # Mythic View — Changelog
 
+## 3.2.0 — Impact feedback and contextual framing (2026-10-11)
+
+- Released optional direct-hit camera feedback with curated damage classification, plus cached target-size framing by map and creature.
+- Made confirmed-hit tremors stronger and gave landings a separate outward camera rebound with a faster, eased recovery.
+- Improved hit confirmation for soft-enemy targeting and stopped the first cast after entering combat from being skipped.
+- Preserved the separation between hit, landing, and target-size controls; DoT-only, unknown, and grouped damage remain excluded.
+
 ## 3.2.0-beta.1 — Beta (2026-10-11)
 
 - Added an optional, confidence-gated impact feedback path: reviewed direct-damage classifications, no DoT, mixed, or unknown triggers, stronger critical-hit response, and separate landing controls. Effects remain off by default.

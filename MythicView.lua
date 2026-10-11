@@ -101,10 +101,9 @@ local BASE_PROFILES = {
 
 -- Ragnarök feel. Every effect is additive; set a scale to 0 to disable it.
 local FEEL = {
-  -- Master switch for every shake-type effect: trauma shake, footstep sway,
-  -- breathing, hit/landing/combat-entry impulses and micro-freezes. Off until
-  -- the motion is redesigned; framing (styles, drag, look-ahead, rubber band,
-  -- lock-on, aim) is unaffected.
+  -- Master switch for ambient motion: trauma shake, footstep sway, breathing,
+  -- combat-entry impulses and micro-freezes. Direct hit/landing feedback is
+  -- controlled by its own options and remains readable with this switch off.
   shakesEnabled = false,
 
   -- Ragnarök keeps the camera over the right shoulder; it never swaps sides
@@ -125,6 +124,12 @@ local FEEL = {
   shakeShoulder = 0.14, -- shoulder offset at full trauma
   shakeFov = 1.40, -- FOV degrees at full trauma
   shakeFrequency = 14, -- Hz, the dominant shake frequency
+
+  -- Direct impact tremor is independent of the ambient shake master. It uses
+  -- the impulse envelope and linear trauma so short landings and confirmed
+  -- hits remain visible without requiring blind vertical camera rotation.
+  impactShakeShoulder = 0.60,
+  impactShakeFov = 4.50, -- FOV degrees at full impact strength
 
   -- Footsteps: a sharp dip on each foot strike plus a sway toward the planted
   -- foot. Cadence follows the real movement speed.
@@ -173,8 +178,10 @@ local FEEL = {
   hitAutoAttackScale = 0.60,
   hitTaken = { trauma = 0.38, zoom = 0.25, fov = 0.80, pitch = 0.50, duration = 0.34, attack = 0.12 },
   combatEntry = { trauma = 0.12, zoom = 0.65, fov = 2.80, pitch = 0, duration = 0.60, attack = 0.50 },
-  landing = { trauma = 0.10, zoom = -0.10, fov = 0, pitch = -0.30, duration = 0.32, attack = 0.15 },
-  landingHeavy = { trauma = 0.45, zoom = -0.30, fov = -1.0, pitch = -1.40, duration = 0.52, attack = 0.14 },
+  -- Landings push the frame outward and off-axis, then settle back. This is a
+  -- broad, weighted rebound; confirmed hits use the separate noisy tremor.
+  landing = { trauma = 0, zoom = 0.40, fov = 2.0, pitch = 0, shoulder = 0.12, duration = 0.50, attack = 0.08 },
+  landingHeavy = { trauma = 0, zoom = 1.10, fov = 4.5, pitch = 0, shoulder = 0.35, duration = 0.78, attack = 0.06 },
 
   -- Impact micro-freezes: a hit impulse snaps to its peak and holds while the
   -- rest of the camera (shake, steps, drift, springs) pauses for a few frames.
@@ -292,8 +299,8 @@ local CROWD_RELEASE_DELAY = 1.50
 local HIT_CONFIRM_WINDOW = 0.85
 local HIT_COOLDOWN = 0.12
 local HEAVY_CAST_TIME = 0.90
-local LANDING_MIN_FALL = 0.25
-local LANDING_HEAVY_FALL = 1.75
+local LANDING_MIN_FALL = 0.12
+local LANDING_HEAVY_FALL = 1.20
 -- Grouped constants (keeps the main chunk under Lua's 200-local limit).
 local K = {}
 K.CAMERA_BUSY_INTERVAL = 1 / 144 -- cap while the camera is animating
@@ -1290,7 +1297,7 @@ end
 local IMPULSE_SOFTEN = 1.45
 local IMPULSE_MIN_ATTACK = 0.32
 
-local function AddImpulse(spec, scale, hold, impact)
+local function AddImpulse(spec, scale, hold, impact, kind)
   scale = (scale or 1) * cam.effectScale * (impact and tune.impact or tune.shake)
   if scale <= 0 then return end
   hold = hold or 0
@@ -1300,12 +1307,17 @@ local function AddImpulse(spec, scale, hold, impact)
     elapsed = 0,
     hold = hold,
     duration = spec.duration * IMPULSE_SOFTEN + hold,
-    attack = max(spec.attack, IMPULSE_MIN_ATTACK),
+    attack = kind == "landing" and spec.attack or max(spec.attack, IMPULSE_MIN_ATTACK),
+    kind = kind,
     zoom = spec.zoom * scale,
     fov = spec.fov * scale,
     pitch = spec.pitch * scale,
+    shoulder = (spec.shoulder or 0) * scale,
+    impactShake = kind == "hit" and math.sqrt(max(0, spec.trauma * scale)) or 0,
   }
-  cam.trauma = min(1, cam.trauma + spec.trauma * scale)
+  if not impact then
+    cam.trauma = min(1, cam.trauma + spec.trauma * scale)
+  end
 end
 
 -- Fast rise, softer settle: hits snap in and breathe out. An impulse with a
@@ -1321,6 +1333,10 @@ local function ImpulseEnvelope(impulse)
   local attack = impulse.attack
   if progress < attack then
     return EaseInOutSine(progress / attack)
+  end
+  if impulse.kind == "landing" then
+    local recovery = (progress - attack) / (1 - attack)
+    return (1 - recovery) * (1 - recovery)
   end
   return 0.5 * (1 + cos(pi * (progress - attack) / (1 - attack)))
 end
@@ -1340,6 +1356,7 @@ local function UpdateEffectLayers(elapsed)
   -- holds transient juice (impulses, shake), applied after the sustained part
   -- is clamped so a kick still reads when the view is already at its widest.
   local zoomOffset, fovOffset, fovKick, shoulderOffset, pitchOffset = 0, 0, 0, 0, 0
+  local impactShake = 0
   -- During a micro-freeze every continuous layer stops; only the impulses
   -- holding their peak keep real time.
   local fxElapsed = elapsed
@@ -1361,6 +1378,8 @@ local function UpdateEffectLayers(elapsed)
       local envelope = ImpulseEnvelope(impulse)
       zoomOffset = zoomOffset + impulse.zoom * envelope
       fovKick = fovKick + impulse.fov * envelope
+      shoulderOffset = shoulderOffset + impulse.shoulder * envelope
+      impactShake = max(impactShake, impulse.impactShake * envelope)
       if tune.vertical then
         pitchOffset = pitchOffset + impulse.pitch * envelope
       end
@@ -1400,6 +1419,16 @@ local function UpdateEffectLayers(elapsed)
     end
     shoulderOffset = shoulderOffset + FEEL.shakeShoulder * shake * ShakeNoise(clock, 61.7)
     fovKick = fovKick + FEEL.shakeFov * shake * ShakeNoise(clock, 123.1)
+  end
+
+  -- Confirmed hits and landings get a readable lateral/FOV tremor. Keep this
+  -- separate from the squared ambient trauma, which made light impacts almost
+  -- invisible, and from vertical shake, which drives camera pitch blindly.
+  if impactShake > 0 then
+    shoulderOffset = shoulderOffset + FEEL.impactShakeShoulder * impactShake
+      * ShakeNoise(clock, 241.9)
+    fovKick = fovKick + FEEL.impactShakeFov * impactShake
+      * ShakeNoise(clock, 307.3)
   end
 
   -- Footsteps: cadence from real speed and a sway toward the planted foot
@@ -1645,7 +1674,7 @@ local function FireHit(heavy, critical, scale)
   lastHitTime = now
   local hold = ((heavy or critical) and FEEL.hitstopHeavy or FEEL.hitstopLight) * tune.hitstop
   AddImpulse(critical and FEEL.hitCritical or heavy and FEEL.hitHeavy or FEEL.hitLight,
-    scale, hold, true)
+    scale, hold, true, "hit")
   cam.freeze = max(cam.freeze, hold)
 end
 
@@ -1662,7 +1691,9 @@ local function OnPlayerCastSucceeded(castGUID, spellID)
 end
 
 local function OnUnitCombat(unit, action, flagText, amount)
-  if unit ~= "target" or not pendingHit or IsInGroup() then return end
+  -- Combat Mode can deal damage through WoW's soft-enemy token without
+  -- populating the hard target token. Accept either token for confirmation.
+  if (unit ~= "target" and unit ~= "softenemy") or not pendingHit or IsInGroup() then return end
   if IsReadableString(action) and action ~= "WOUND" then return end
   local now = GetTime()
   local confirmedCast = now - pendingHit.time <= HIT_CONFIRM_WINDOW
@@ -1695,7 +1726,7 @@ local function OnLanded(fallTime)
     pitch = light.pitch + (heavy.pitch - light.pitch) * severity,
     duration = light.duration + (heavy.duration - light.duration) * severity,
     attack = light.attack,
-  }, scale, nil, true)
+  }, scale, nil, true, "landing")
 end
 
 -- Context ----------------------------------------------------------------
@@ -2228,7 +2259,7 @@ for _, castEvent in ipairs({ "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAILED",
     "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_CHANNEL_STOP" }) do
   frame:RegisterUnitEvent(castEvent, "player")
 end
-frame:RegisterUnitEvent("UNIT_COMBAT", "player", "target")
+frame:RegisterUnitEvent("UNIT_COMBAT", "player", "target", "softenemy")
 frame:RegisterEvent("PLAYER_TARGET_CHANGED")
 frame:RegisterEvent("PLAYER_UPDATE_RESTING")
 frame:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
@@ -2358,10 +2389,11 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     aiming = false
     if combatEntryPending then
       triggerCombatEntry = true
-    else
-      local castGUID, spellID = ...
-      OnPlayerCastSucceeded(castGUID, spellID)
     end
+    -- The first cast after entering combat still needs damage classification;
+    -- the combat-entry camera impulse must not consume the hit candidate.
+    local castGUID, spellID = ...
+    OnPlayerCastSucceeded(castGUID, spellID)
   elseif event == "PLAYER_STARTED_MOVING" then
     playerMoving = true
   elseif event == "PLAYER_STOPPED_MOVING" then

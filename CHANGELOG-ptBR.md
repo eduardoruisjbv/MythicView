@@ -1,5 +1,12 @@
 # Mythic View — Changelog
 
+## 3.2.0 — Impacto e enquadramento contextual (2026-10-11)
+
+- Lançado o feedback opcional de câmera para golpes diretos classificados e o enquadramento do alvo com cache por mapa e criatura.
+- A tremida de golpes confirmados ficou mais forte; aterrissagens agora têm um recuo de câmera próprio, com retorno suave.
+- A confirmação de golpes passou a reconhecer o alvo suave e deixou de ignorar a primeira habilidade após entrar em combate.
+- Controles de golpes, aterrissagens e tamanho do alvo continuam separados; danos periódicos, desconhecidos e em grupo seguem sem gerar impacto.
+
 ## 3.1.0 — Estilo de câmera inspirado em Black Desert (2026-10-10)
 
 - Adicionado um perfil inspirado em Black Desert Online, com enquadramento de ação responsivo, visão mais ampla e deslocamento moderado para o ombro.
