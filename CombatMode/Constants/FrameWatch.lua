@@ -6,7 +6,7 @@
 --  whether freelook should stay off.
 --  Architecture / how it works:
 --    • FramesToCheck — static `_G[name]:IsVisible()` targets (bags, character, options,
---      CombatMode dialogs, etc.).
+--      CombatMode dialogs, and author addon windows opened by slash commands).
 --    • Wildcard / group tables — prefix matches for dynamic frames; OPie rings feed the
 --      FreeLook OPie rematch latch when visible.
 --    • MountsToCheck — spell IDs for vendor mounts. Used as a fallback default when
@@ -26,6 +26,7 @@ CM.Constants.FramesToCheck = {
   "AuctionHouseFrame",
   "BankFrame",
   "BattlefieldFrame",
+  "BagMemoryFrame",
   "BFAMissionFrame",
   "BonusRollFrame",
   "CalendarFrame",
@@ -74,6 +75,7 @@ CM.Constants.FramesToCheck = {
   "FlightMapFrame",
   "FriendsFrame",
   "GameMenuFrame",
+  "GearMemoryWindow",
   "GarrisonCapacitiveDisplayFrame",
   "GenericTraitFrame",
   "GossipFrame",
@@ -97,6 +99,7 @@ CM.Constants.FramesToCheck = {
   "MailFrame",
   "MajorFactionRenownFrame",
   "MerchantFrame",
+  "MuscleMemoryFrame",
   "OptionsFrame",
   "OrderHallMissionFrame",
   "OrderHallTalentFrame",

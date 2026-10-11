@@ -169,6 +169,7 @@ local FEEL = {
   hitLight = { trauma = 0.36, zoom = -0.20, fov = -1.30, pitch = -0.40, duration = 0.30, attack = 0.16 },
   hitHeavy = { trauma = 0.56, zoom = -0.38, fov = -2.40, pitch = -0.75, duration = 0.44, attack = 0.14 },
   hitCriticalTrauma = 0.12,
+  hitCritical = { trauma = 0.72, zoom = -0.48, fov = -3.0, pitch = -0.90, duration = 0.52, attack = 0.12 },
   hitAutoAttackScale = 0.60,
   hitTaken = { trauma = 0.38, zoom = 0.25, fov = 0.80, pitch = 0.50, duration = 0.34, attack = 0.12 },
   combatEntry = { trauma = 0.12, zoom = 0.65, fov = 2.80, pitch = 0, duration = 0.60, attack = 0.50 },
@@ -234,8 +235,9 @@ local FEEL = {
     occludedSilhouettePlayer = 1, -- draw the character through occluders
   },
   follow = {
-    cameraSmoothStyle = 1, -- trail horizontally behind the character while moving
-    cameraYawSmoothSpeed = 120, -- lazier follow swing (WoW default 180)
+    cameraSmoothStyle = 1, -- native horizontal recentering while moving
+    -- Match Blizzard's Auto Follow Speed default and yaw-to-pitch ratio.
+    cameraYawSmoothSpeed = 180,
     cameraPitchSmoothSpeed = 45,
   },
   -- Engine-driven tilt that lowers the character in frame as the camera pulls
@@ -287,15 +289,9 @@ local CROWD_COUNT = 2
 local HORDE_COUNT = 4
 local CROWD_RELEASE_DELAY = 1.50
 -- Hit confirmation: a cast is a hit only once the target actually takes damage.
-local HIT_CONFIRM_WINDOW = 1.20
--- Used only until the first UNIT_COMBAT arrives (e.g. if it is unavailable).
-local HIT_FALLBACK_DELAY = 0.20
+local HIT_CONFIRM_WINDOW = 0.85
 local HIT_COOLDOWN = 0.12
-local AUTO_ATTACK_HIT_COOLDOWN = 0.90
 local HEAVY_CAST_TIME = 0.90
-local HIT_TAKEN_COOLDOWN = 0.50
-local HIT_TAKEN_SECRET_COOLDOWN = 0.80
-local AUTO_ATTACK_SPELL_ID = 6603
 local LANDING_MIN_FALL = 0.25
 local LANDING_HEAVY_FALL = 1.75
 -- Grouped constants (keeps the main chunk under Lua's 200-local limit).
@@ -473,6 +469,10 @@ local SETTINGS_DEFAULTS = {
   shakeIntensity = 100,
   stepSway = 100,
   hitImpacts = true,
+  impactFeedback = false,
+  impactIntensity = 100,
+  landingImpacts = false,
+  targetSizeFraming = false,
   hitstop = true,
   breathing = true,
   verticalShake = false,
@@ -541,7 +541,9 @@ local function RebuildTuning()
   tune.presetID = effectivePresetID
   tune.pvpFixed = pvpFixed
   tune.shake = pvpFixed and 0 or preset.shake * settings.shakeIntensity / 100
-  tune.hits = not pvpFixed and settings.hitImpacts
+  tune.impact = not pvpFixed and settings.impactFeedback and settings.impactIntensity / 100 or 0
+  tune.hits = not pvpFixed and settings.hitImpacts and tune.impact > 0
+  tune.landings = not pvpFixed and settings.landingImpacts and tune.impact > 0
   tune.hitstop = not pvpFixed and settings.hitstop and preset.hitstop or 0
   tune.sway = not pvpFixed and preset.sway * settings.stepSway / 100 or 0
   tune.drag = not pvpFixed and settings.speedDrag and preset.drag or 0
@@ -551,7 +553,7 @@ local function RebuildTuning()
   tune.vertical = not pvpFixed and settings.verticalShake or false
   tune.breathing = not pvpFixed and settings.breathing or false
   if not FEEL.shakesEnabled then
-    tune.shake, tune.hits, tune.hitstop, tune.sway = 0, false, 0, 0
+    tune.shake, tune.hitstop, tune.sway = 0, 0, 0
     tune.vertical, tune.breathing = false, false
   end
   tune.composition = not pvpFixed and settings.composition or false
@@ -601,6 +603,7 @@ local pollElapsed = 0
 local motionUpdateElapsed = 0
 local cameraUpdateElapsed = 0
 local originalCVars = {}
+FEEL.activeEngineGroups = {}
 local RestoreCameraSettings
 local cameraControlsActive = false
 local activeMountID
@@ -669,11 +672,7 @@ local cam = {
 
 -- Hit confirmation state.
 local pendingHit
-local pendingHitHeavy = false
-local unitCombatSeen = false
 local lastHitTime = 0
-local lastAutoAttackHit = 0
-local lastHitTakenTime = 0
 local castStartTime
 local castStartGUID
 
@@ -1291,8 +1290,8 @@ end
 local IMPULSE_SOFTEN = 1.45
 local IMPULSE_MIN_ATTACK = 0.32
 
-local function AddImpulse(spec, scale, hold)
-  scale = (scale or 1) * cam.effectScale * tune.shake
+local function AddImpulse(spec, scale, hold, impact)
+  scale = (scale or 1) * cam.effectScale * (impact and tune.impact or tune.shake)
   if scale <= 0 then return end
   hold = hold or 0
   local impulses = cam.impulses
@@ -1474,6 +1473,9 @@ local function UpdateEffectLayers(elapsed)
   cam.lockZoom, cam.lockZoomVelocity = SmoothDamp(cam.lockZoom, lockOn and FEEL.lockZoom or 0,
     cam.lockZoomVelocity, 0.5, fxElapsed)
   zoomOffset = zoomOffset + cam.lockZoom
+  if ns.UpdateTargetSizeZoom then
+    zoomOffset = zoomOffset + ns.UpdateTargetSizeZoom(elapsed, settings.targetSizeFraming)
+  end
 
   -- Aim: hard casts and channels push in over the shoulder (Horizon style).
   local aimTarget = (tune.aim and aiming and not cam.mounted) and 1 or 0
@@ -1639,71 +1641,50 @@ end
 local function FireHit(heavy, critical, scale)
   if not tune.hits then return end
   local now = GetTime()
-  if now - lastHitTime < HIT_COOLDOWN then
-    -- Rapid hits keep the shake alive without stacking push-ins.
-    AddTrauma(0.08)
-    return
-  end
+  if now - lastHitTime < HIT_COOLDOWN then return end
   lastHitTime = now
   local hold = ((heavy or critical) and FEEL.hitstopHeavy or FEEL.hitstopLight) * tune.hitstop
-  AddImpulse(heavy and FEEL.hitHeavy or FEEL.hitLight, scale, hold)
+  AddImpulse(critical and FEEL.hitCritical or heavy and FEEL.hitHeavy or FEEL.hitLight,
+    scale, hold, true)
   cam.freeze = max(cam.freeze, hold)
-  if critical then AddTrauma(FEEL.hitCriticalTrauma) end
 end
 
-local function OnPlayerCastSucceeded(castGUID)
+local function OnPlayerCastSucceeded(castGUID, spellID)
   local sameCast = castStartTime ~= nil and IsReadableString(castGUID)
     and castGUID == castStartGUID
   local castTime = sameCast and GetTime() - castStartTime or 0
   castStartTime, castStartGUID = nil, nil
-  if not IsReadableTrue(UnitAffectingCombat("player")) then return end
-  pendingHit = GetTime()
-  -- Hard casts land like Ragnarök's heavy attacks; instants like light ones.
-  pendingHitHeavy = castTime >= HEAVY_CAST_TIME
+  if not IsReadableTrue(UnitAffectingCombat("player")) or IsInGroup() then return end
+  local classification = ns.GetImpactClassification and ns.GetImpactClassification(spellID)
+  if not classification or classification.kind ~= "direct"
+      or classification.confidence < 0.70 then return end
+  pendingHit = { time = GetTime(), heavy = castTime >= HEAVY_CAST_TIME, spellID = spellID }
 end
 
 local function OnUnitCombat(unit, action, flagText, amount)
-  local actionReadable = IsReadableString(action)
-  if actionReadable and action ~= "WOUND" then return end
+  if unit ~= "target" or not pendingHit or IsInGroup() then return end
+  if IsReadableString(action) and action ~= "WOUND" then return end
+  local now = GetTime()
+  local confirmedCast = now - pendingHit.time <= HIT_CONFIRM_WINDOW
+  local critical = IsReadableString(flagText)
+    and (flagText == "CRITICAL" or flagText == "CRUSHING")
+  local cast = pendingHit
+  pendingHit = nil
+  if not confirmedCast then return end
 
-  if unit == "target" then
-    unitCombatSeen = true
-    local critical = IsReadableString(flagText)
-      and (flagText == "CRITICAL" or flagText == "CRUSHING")
-    if pendingHit then
-      if GetTime() - pendingHit <= HIT_CONFIRM_WINDOW then
-        FireHit(pendingHitHeavy, critical)
-      end
-      pendingHit = nil
-    elseif not IsInGroup() and closeTargetActive
-        and IsCurrentSpellByID and IsReadableTrue(IsCurrentSpellByID(AUTO_ATTACK_SPELL_ID)) then
-      -- Solo melee: auto-attack swings land without a cast.
-      local now = GetTime()
-      if now - lastAutoAttackHit >= AUTO_ATTACK_HIT_COOLDOWN then
-        lastAutoAttackHit = now
-        FireHit(false, critical, FEEL.hitAutoAttackScale)
-      end
-    end
-  elseif unit == "player" then
-    if not tune.hits then return end
-    local now = GetTime()
-    local scale = 0.5
-    local cooldown = HIT_TAKEN_SECRET_COOLDOWN
-    local maxHealth = UnitHealthMax("player")
-    if actionReadable and IsReadableNumber(amount) and IsReadableNumber(maxHealth) and maxHealth > 0 then
-      local fraction = amount / maxHealth
-      if fraction < 0.02 then return end
-      scale = Clamp(0.35 + fraction * 6, 0.35, 1.30)
-      cooldown = HIT_TAKEN_COOLDOWN
-    end
-    if now - lastHitTakenTime < cooldown then return end
-    lastHitTakenTime = now
-    AddImpulse(FEEL.hitTaken, scale)
+  -- UNIT_COMBAT has no source GUID or spell ID. Solo + short-window matching is
+  -- still a heuristic; unknown, DoT-only and grouped damage stay silent.
+  local scale = cast.heavy and 1.0 or 0.72
+  local targetHealth = UnitHealthMax("target")
+  if IsReadableNumber(amount) and IsReadableNumber(targetHealth) and targetHealth > 0 then
+    scale = Clamp(0.55 + amount / targetHealth * 15, 0.55, 1.50)
   end
+  if critical then scale = max(scale, 1.45) end
+  FireHit(cast.heavy, critical, scale)
 end
 
 local function OnLanded(fallTime)
-  if fallTime < LANDING_MIN_FALL then return end
+  if not tune.landings or fallTime < LANDING_MIN_FALL then return end
   local severity = Clamp((fallTime - LANDING_MIN_FALL) / (LANDING_HEAVY_FALL - LANDING_MIN_FALL), 0, 1)
   local light, heavy = FEEL.landing, FEEL.landingHeavy
   local scale = IsMounted() and 0.5 or 1
@@ -1714,7 +1695,7 @@ local function OnLanded(fallTime)
     pitch = light.pitch + (heavy.pitch - light.pitch) * severity,
     duration = light.duration + (heavy.duration - light.duration) * severity,
     attack = light.attack,
-  }, scale)
+  }, scale, nil, true)
 end
 
 -- Context ----------------------------------------------------------------
@@ -1821,6 +1802,11 @@ SlashCmdList.MYTHICVIEW = function(message)
     else
       print("|cffd9bf8cMythic View|r: combat controls are unavailable.")
     end
+  elseif command:match("^size%s+") then
+    local size = command:match("^size%s+(%a+)$")
+    local ok = ns.SetTargetSizeOverride and ns.SetTargetSizeOverride(size)
+    print(ok and ("|cffd9bf8cMythic View|r: target size set to " .. size .. ".")
+      or "|cffd9bf8cMythic View|r: use /mv size small, medium, large, or auto while targeting a creature.")
   elseif command == "experimental" then
     if ns.OpenExperimentalCrosshairOptions then
       ns.OpenExperimentalCrosshairOptions()
@@ -1835,7 +1821,7 @@ SlashCmdList.MYTHICVIEW = function(message)
   elseif ns.OpenOptions then
     ns.OpenOptions()
   else
-    print("|cffd9bf8cMythic View|r: /mv — menu, /mv combat — combat controls, /mv experimental — experimental settings, /mv lock — travar/soltar o alvo atual.")
+    print("|cffd9bf8cMythic View|r: /mv — menu, /mv combat — combat controls, /mv experimental — experimental settings, /mv size <small|medium|large|auto> — target framing, /mv lock — travar/soltar o alvo atual.")
   end
 end
 
@@ -2054,12 +2040,16 @@ local function SaveCameraSettings(refreshCurrentValues)
 end
 
 local function SetEngineGroup(values, enabled)
+  local wasEnabled = FEEL.activeEngineGroups[values] == true
+  if not enabled and not wasEnabled then return end
+
   for name, value in pairs(values) do
     local original = originalCVars[name]
     if original ~= nil then
       SetCVar(name, enabled and tostring(value) or original, "MythicView")
     end
   end
+  FEEL.activeEngineGroups[values] = enabled and true or nil
 end
 
 local function ApplyEngineSettings()
@@ -2149,6 +2139,7 @@ RestoreCameraSettings = function()
       SetCVar(name, value, "MythicView")
     end
   end
+  wipe(FEEL.activeEngineGroups)
 end
 
 -- Flight-path taxis and Skyriding are driven by the game's own camera; every
@@ -2250,11 +2241,11 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
   if event == "UNIT_COMBAT" then
     if not settings.actionCameraEnabled then return end
     -- High-frequency on a raid boss target: keep this path allocation-free.
-    if unit == "target" and not pendingHit and IsInGroup() then
-      unitCombatSeen = true
-      return
-    end
     OnUnitCombat(unit, ...)
+    return
+  elseif event == "PLAYER_TARGET_CHANGED" then
+    pendingHit = nil
+    if ns.RefreshTargetSize then ns.RefreshTargetSize("target") end
     return
   elseif event == "UNIT_SPELLCAST_START" then
     if not settings.actionCameraEnabled then return end
@@ -2368,7 +2359,8 @@ frame:SetScript("OnEvent", function(_, event, unit, ...)
     if combatEntryPending then
       triggerCombatEntry = true
     else
-      OnPlayerCastSucceeded((...))
+      local castGUID, spellID = ...
+      OnPlayerCastSucceeded(castGUID, spellID)
     end
   elseif event == "PLAYER_STARTED_MOVING" then
     playerMoving = true
@@ -2436,15 +2428,8 @@ frame:SetScript("OnUpdate", function(_, elapsed)
     end
   end
 
-  if pendingHit then
-    local age = GetTime() - pendingHit
-    if not unitCombatSeen and age >= HIT_FALLBACK_DELAY then
-      -- UNIT_COMBAT never arrived this session: fall back to cast timing.
-      pendingHit = nil
-      FireHit(pendingHitHeavy, false)
-    elseif age > HIT_CONFIRM_WINDOW then
-      pendingHit = nil
-    end
+  if pendingHit and GetTime() - pendingHit.time > HIT_CONFIRM_WINDOW then
+    pendingHit = nil
   end
 
   -- True while any layer is still moving. Everything compared here snaps to an

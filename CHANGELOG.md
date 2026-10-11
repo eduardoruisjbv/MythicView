@@ -1,5 +1,12 @@
 # Mythic View — Changelog
 
+## 3.2.0-beta.1 — Beta (2026-10-11)
+
+- Added an optional, confidence-gated impact feedback path: reviewed direct-damage classifications, no DoT, mixed, or unknown triggers, stronger critical-hit response, and separate landing controls. Effects remain off by default.
+- Added an optional map-and-creature target-framing cache with smoothed zoom and `/mv size small|medium|large|auto` manual overrides. Automatic estimates use coarse NPC classifications and stay conservative.
+- Combat Mode now releases mouse look for the MuscleMemory, BagMemory, and GearMemory windows, matching its behavior for the character panel, bags, and game menus.
+- Clarified that the optional follow setting uses WoW's horizontal-only camera recentering, aligned its follow speed with the native default, and stopped disabled engine options from rewriting saved CVars during unrelated settings changes.
+
 ## 3.1.0 — Black Desert inspired camera style (2026-10-10)
 
 - Added a Black Desert Online-inspired profile with responsive action framing, a wider view, and a modest shoulder offset.

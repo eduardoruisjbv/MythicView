@@ -372,7 +372,11 @@ function ns.BuildOptions()
       "|cffe07050[Not recommended]|r May conflict with the native camera."
     ))
   else
-    Header("[Recommended] Keep enabled   [Optional] Personal preference   [Not recommended] May conflict")
+    -- Older Settings APIs lack text-entry initializers. Keep each legend item
+    -- on its own row so the narrow category column never clips the final tag.
+    Header("|cff66dd88[Recommended]|r Keep enabled for most setups.")
+    Header("|cffe0c060[Optional]|r Personal preference.")
+    Header("|cffe07050[Not recommended]|r May conflict with the native camera.")
   end
   Header("Style")
   local presetSetting = Register("preset", Settings.VarType.String, "Camera style")
@@ -394,9 +398,7 @@ function ns.BuildOptions()
   if ns.SHAKES_ENABLED then
   Header("Shake and impact")
   Percent("shakeIntensity", "Shake intensity", 0, 200,
-    "Strength of all shakes and impacts (hits, damage, landing, and entering combat).")
-  Checkbox("hitImpacts", "Shake on hits and damage taken",
-    "Zoom/FOV kick and shake when your attacks land or when you take damage.")
+    "Strength of the movement and combat-entry shake effects.")
   Checkbox("hitstop", "Hit-stop on hits",
     "The camera freezes for a few frames at the peak of a hit before shaking.")
   Percent("stepSway", "Footstep sway", 0, 200,
@@ -406,6 +408,18 @@ function ns.BuildOptions()
   Checkbox("verticalShake", "Vertical shake (experimental)",
     "Tilts the camera up/down on impacts and footsteps. WoW does not expose the camera’s actual pitch, so this may conflict with native movement. Leave it off if the camera bobs while running.", "risky")
   end
+
+  Header("Impact feedback")
+  Checkbox("impactFeedback", "Enable impact effects",
+    "Optional experimental camera feedback. Only reviewed direct-damage spells from Muscle Memory can trigger it; DoT-only, mixed, unknown, and grouped-combat hits are ignored because UNIT_COMBAT does not identify the damage source. A short solo timing match is still approximate.", "optional")
+  Percent("impactIntensity", "Impact intensity", 0, 150,
+    "Scales confirmed hit and landing impulses. Effects require Enable impact effects; set to 0 to mute them.")
+  Checkbox("hitImpacts", "Impacts on confirmed attacks",
+    "Uses a brief damage confirmation after a reviewed cast. Critical hits receive a stronger camera response. Auto-attacks and damage taken are excluded because the game does not identify their source reliably.", "optional")
+  Checkbox("landingImpacts", "Impact on landing",
+    "Adds a subtle camera impulse after a fall; longer falls produce a stronger landing response.", "optional")
+  Checkbox("targetSizeFraming", "Adapt zoom to target size",
+    "Caches coarse creature classifications by map and creature ID. These are estimates, not model measurements; use /mv size small, medium, large, or auto to override the current target.", "optional")
 
   Header("Framing")
   Checkbox("speedDrag", "Pull back with speed (speed drag)",
@@ -424,8 +438,8 @@ function ns.BuildOptions()
   Header("Game engine")
   Checkbox("smoothCollision", "Smooth collision + silhouette behind walls",
     "The camera tolerates more obstacles before moving closer, and your character appears as a silhouette when occluded.", "good")
-  Checkbox("freeFollow", "Camera follows behind while moving (free follow)",
-    "The game turns the camera behind your character as you move, with smooth lag.", "risky")
+  Checkbox("freeFollow", "Horizontal camera follow while moving",
+    "When the Mythic View camera is enabled, uses WoW's native horizontal camera recentering as you move. The camera turns behind your character; vertical camera movement is unchanged. This is optional and can be toggled at any time. Your original camera settings are restored when disabled.", "optional")
 
   Settings.RegisterAddOnCategory(category)
   ns.category = category
