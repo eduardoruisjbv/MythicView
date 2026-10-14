@@ -1,4 +1,4 @@
-## Interface: 120100
+## Interface: 120105, 120100
 ## Title: Mythic View
 ## Notes: Contextual action camera and integrated action-combat controls.
 ## Notes-ptBR: Câmera contextual e controles de combate em estilo de ação integrados.
