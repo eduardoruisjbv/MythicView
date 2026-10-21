@@ -1,5 +1,9 @@
 # Mythic View — Changelog
 
+## 3.2.2 — Compatibilidade com o WoW 12.1.5 (2026-10-20)
+
+- Adicionado o WoW 12.1.5 (interface 120105) aos clientes suportados; o 12.1.0 continua suportado.
+
 ## 3.2.1 — Hotfix: controle dos perfis de câmera (2026-10-11)
 
 - Separado o mouse-look persistente do Action Combat dos perfis de câmera do Mythic View.
