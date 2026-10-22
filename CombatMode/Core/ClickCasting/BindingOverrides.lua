@@ -449,6 +449,14 @@ local function ClickCastMouseButton(key)
 end
 
 function CM.SetNewBinding(buttonSettings)
+  -- Mouselook overrides and proxy macrotext are locked in combat; replay the live
+  -- settings table on PLAYER_REGEN_ENABLED instead of binding to a stale proxy.
+  if InCombatLockdown() then
+    CM.TryApplyBindingChange("click casting binding", function()
+      CM.SetNewBinding(buttonSettings)
+    end)
+    return
+  end
   if not buttonSettings.enabled then
     return
   end
@@ -494,12 +502,22 @@ function CM.SetNewBinding(buttonSettings)
 end
 
 function CM.OverrideDefaultButtons()
+  if InCombatLockdown() then
+    MarkPendingClickCastRefresh()
+    return
+  end
   for _, button in pairs(CM.Constants.ButtonsToOverride) do
     CM.SetNewBinding(CM.DB[CM.GetBindingsLocation()].bindings[button])
   end
 end
 
 function CM.ResetBindingOverride(buttonSettings)
+  if InCombatLockdown() then
+    CM.TryApplyBindingChange("click casting binding", function()
+      CM.ResetBindingOverride(buttonSettings)
+    end)
+    return
+  end
   SetMouselookOverrideBinding(buttonSettings.key, nil)
   CM.DebugPrint(buttonSettings.key .. "'s override binding is now cleared")
 end
