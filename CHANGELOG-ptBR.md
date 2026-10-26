@@ -3,6 +3,7 @@
 ## 3.2.2 — Compatibilidade com o WoW 12.1.5 (2026-10-20)
 
 - Adicionado o WoW 12.1.5 (interface 120105) aos clientes suportados; o 12.1.0 continua suportado.
+- Adia alterações de click-casting até o fim do combate.
 
 ## 3.2.1 — Hotfix: controle dos perfis de câmera (2026-10-11)
 
